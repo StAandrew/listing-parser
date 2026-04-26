@@ -84,11 +84,14 @@ Hugging Face; its outputs (`predictions.jsonl`) are scored here.
 | `examples.json` | humans only | Worked examples; referenced from the prompt. |
 | `src/listing_parser/schema.py` | humans only | Mirrors `prompt.md`; keep in sync. |
 | `src/listing_parser/benchmarks/*.py` | code changes | Pure logic, no state. |
+| `src/listing_parser/runners/*.py` | code changes | Provider-specific; share `base.Runner` + `_output.parse_with_retry`. |
 | `data/` | external tools | Raw CSV exports of listing descriptions. Read-only from code's perspective. |
 | `benchmarks/test_set.jsonl` | `test_set.py --force` only | Frozen; regenerating invalidates history. |
 | `benchmarks/test_set.jsonl.meta.json` | follows `test_set.jsonl` | Repro metadata. |
-| `benchmarks/runs/<slug>/predictions.jsonl` | runners | One subdir per run. |
-| `benchmarks/runs/<slug>/report.{md,json}` | `lp-benchmark score` | Regenerable from predictions. |
+| `benchmarks/runs/<slug>/predictions.jsonl` | `lp-benchmark run` | One subdir per run; committed. |
+| `benchmarks/runs/<slug>/report.{md,json}` | `lp-benchmark score` | Regenerable from predictions; committed. |
+| `benchmarks/runs/<slug>/_row_ids.txt` | `lp-benchmark run` | Resume sidecar; gitignored. |
+| `benchmarks/runs/<slug>/_log.jsonl` | `lp-benchmark run` | Per-row diagnostics; gitignored. |
 | `scripts/` | code changes | One-off utilities (data prep, HF pushes, augmentation). Not on the runtime path. |
 | `tests/` | follows code | Mirror the module structure. |
 
@@ -104,17 +107,24 @@ pytest -q
 
 # Freeze the test set (ONCE per labelled-dataset version)
 python -m listing_parser.benchmarks.test_set \
-    --repo standrey/listing-descriptions --config data --n 60
+ --repo standrey/listing-descriptions --config data --n 60
 
 # Smoke the scorer (expect 1.0 on parse/schema/macro-accuracy)
 lp-benchmark smoke --gold benchmarks/test_set.jsonl
 
+# Generate predictions for a run
+AWS_PROFILE=XXXXXXX lp-benchmark run \
+ --runner bedrock-haiku \
+ --gold benchmarks/test_set.jsonl \
+ --out-dir benchmarks/runs/<slug> \
+ --concurrency 4
+
 # Score a run
 lp-benchmark score \
-    --gold benchmarks/test_set.jsonl \
-    --predictions benchmarks/runs/<slug>/predictions.jsonl \
-    --out-dir benchmarks/runs/<slug> \
-    --name "<human-readable run name>"
+ --gold benchmarks/test_set.jsonl \
+ --predictions benchmarks/runs/<slug>/predictions.jsonl \
+ --out-dir benchmarks/runs/<slug> \
+ --name "<human-readable run name>"
 ```
 
 ## Scorer internals (short version)
@@ -153,12 +163,19 @@ lp-benchmark score \
 ## When adding a new runner (future PR)
 
 - Put it in `src/listing_parser/runners/<provider>.py`.
-- The runner's only contract with the rest of the system is: given a
-  gold JSONL and a destination dir, write `predictions.jsonl` with
-  `{row_index, pred, raw}` rows.
-- Runners handle their own rate limiting, retries, and fence-stripping
-  of raw model output. Move fence-stripping logic into a shared
-  helper if more than one runner needs it.
+- Implement the `Runner` Protocol from `runners/base.py`: one async
+  `predict(description, listing_type) -> RunnerResult`, plus a `name`
+  attribute (used in the report header and log lines).
+- Use `runners._output.parse_with_retry` for fence stripping + one-shot
+  JSON-parse retry. Do NOT retry on schema validity — the scorer's
+  `schema_rate` metric exists to catch that, and retrying hides the
+  regressions a production inference stack would still have to live
+  with.
+- Register the runner in `benchmarks/cli._RUNNER_BUILDERS` so
+  `lp-benchmark run --runner <slug>` picks it up.
+- Runner code owns its own rate limiting / retries / connection pool.
+  The pipeline (`runners/pipeline.py`) takes care of gold loading,
+  resume sidecar, concurrency gating, and disk writes.
 - The scorer should need **zero** changes to support a new runner.
 
 ## Known gotchas

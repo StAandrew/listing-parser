@@ -9,7 +9,7 @@ This is subordinate to the repo-level `CLAUDE.md`; read that first.
 |---|---|---|
 | `test_set.py` | Build `benchmarks/test_set.jsonl` from a labelled HF dataset (one-shot, frozen afterwards). | Yes: HF Hub + disk. |
 | `scorer.py` | Pure scoring logic. `score_run(gold, pred) -> AggregateReport`. | File read only. |
-| `cli.py` | `lp-benchmark {score,smoke}` — rendering + glue. | File read/write. |
+| `cli.py` | `lp-benchmark {run,score,smoke}` — rendering + glue. `run` dispatches to a runner; `score` and `smoke` are offline. | File read/write; `run` additionally imports runners (which touch the network). |
 
 ## Hard rules
 
@@ -77,8 +77,9 @@ remove them when refactoring.
 
 - **Runners.** Any code that calls an LLM and produces
   `predictions.jsonl` — Ollama, Anthropic, Bedrock, vLLM, etc. —
-  belongs in a sibling package (`src/listing_parser/runners/`, to be
-  created). The scorer stays agnostic to provider.
+  lives in `src/listing_parser/runners/`. The scorer stays agnostic
+  to provider. `lp-benchmark run` drives runners; `lp-benchmark
+  score` is pure and only reads JSONL.
 - **Augmentation / data prep.** Teacher-model calls to generate
   additional labelled rows live in `scripts/`. They produce HF
   dataset uploads, not benchmark predictions.

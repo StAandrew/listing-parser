@@ -31,6 +31,7 @@ End-to-end pipeline this repo owns:
 | Prompt + schema design | ✅ `prompt.md`, `examples.json` |
 | Teacher labelling pipeline | ✅ `src/listing_parser/labelling/` |
 | Frozen test set + scorer | ✅ this repo |
+| Student runners (Bedrock Haiku teacher) | ✅ `src/listing_parser/runners/` |
 | Student runners (Ollama / Bedrock base-model / fine-tune) | ☐ next |
 | Fine-tune (Unsloth, Llama 3.1 8B QLoRA on RunPod) | ☐ |
 | Bedrock Custom Model Import | ☐ |
@@ -72,10 +73,17 @@ listing-parser/
 │   │   ├── pipeline.py                      Per-row loop: prompt -> teacher -> clean
 │   │   │                                    -> validate -> retry -> emit
 │   │   └── sinks.py                         Append-only writer + index regeneration
+│   ├── runners/                          Gold -> predictions (for benchmarking)
+│   │   ├── base.py                          Runner Protocol + RunnerResult
+│   │   ├── _output.py                       Shared parse-and-retry (one retry on
+│   │   │                                    bad JSON; no schema retry)
+│   │   ├── bedrock.py                       BedrockHaikuRunner (reuses teacher.py)
+│   │   └── pipeline.py                      Gold JSONL -> predictions.jsonl driver
+│   │                                         with resume + per-run sidecar/log
 │   └── benchmarks/
 │       ├── test_set.py                     Builds benchmarks/test_set.jsonl from HF
 │       ├── scorer.py                       Per-field metrics (pure, no I/O)
-│       └── cli.py                          `lp-benchmark` entry point
+│       └── cli.py                          `lp-benchmark` entry point (run/score/smoke)
 ├── tests/                             pytest suite, 62 cases covering cleaning,
 │                                      prompting, scorer edge cases, and test-set
 │                                      fence-stripping
@@ -136,28 +144,63 @@ Commit the output **and** the `.meta.json` sidecar, which records the
 HF repo, split, seed, and class histogram. That's enough to reproduce
 the exact same test set later.
 
-### 2. Score a run
+### 2. Generate predictions for a run
 
-Prerequisite: a runner (landing in the next PR) produced
-`predictions.jsonl` by feeding every description from the gold set
-through some model.
+Point a runner at the frozen gold set and let it write
+`predictions.jsonl` into a run-specific subdirectory. The runner
+re-calls the model for every gold row; the scorer reads the output
+offline.
+
+```bash
+AWS_PROFILE=XXXXXXX lp-benchmark run \
+    --runner bedrock-haiku \
+    --gold benchmarks/test_set.jsonl \
+    --out-dir benchmarks/runs/haiku-4.5-teacher \
+    --concurrency 4
+```
+
+What lands in `--out-dir`:
+
+- `predictions.jsonl` — `{row_index, pred, raw, [error]}` per line, one
+  row per gold row. **Committed to git** so future runs can diff
+  against it.
+- `_row_ids.txt` — integer row_index sidecar for resume. Gitignored.
+- `_log.jsonl` — per-row usage + timing + error diagnostics.
+  Gitignored.
+
+Resume is on by default: kill the run with Ctrl-C and re-invoke the
+same command; rows already present in the sidecar are skipped. Pass
+`--no-resume` to force a full re-run.
+
+Runner options:
+
+- `--runner bedrock-haiku` is the only implementation today (the
+  teacher model, Haiku 4.5 on Bedrock). Ollama and Bedrock base-model
+  Llama land in a follow-up PR.
+- `--max-parse-retries` controls how many times a JSON-parse failure
+  gets a correction prompt retry. Default 1; set 0 to measure the
+  model's first-pass parse rate honestly.
+- **No schema-validation retry.** The scorer's `schema_rate` metric
+  catches that — retrying here would hide regressions that a
+  production inference stack would still have to live with.
+
+### 3. Score a run
+
+Read the `predictions.jsonl` produced by step 2 (or any other runner)
+and emit the scorecard.
 
 ```bash
 lp-benchmark score \
     --gold benchmarks/test_set.jsonl \
-    --predictions benchmarks/runs/haiku-4.5/predictions.jsonl \
-    --out-dir benchmarks/runs/haiku-4.5 \
+    --predictions benchmarks/runs/haiku-4.5-teacher/predictions.jsonl \
+    --out-dir benchmarks/runs/haiku-4.5-teacher \
     --name "haiku-4.5 (teacher)"
 ```
 
 Output: a markdown scorecard on stdout plus `report.md` + `report.json`
-in the out dir.
-
-### 3. Compare runs
-
-Keep `report.md` checked in for every run. Diffing two checked-in
-reports is the quickest way to answer *"did training make field X
-better or worse?"*.
+in the out dir. Both are committed — diffing two checked-in `report.md`
+files is the quickest way to answer *"did training make field X better
+or worse?"*.
 
 ### 4. Label new listings
 
@@ -410,5 +453,8 @@ before merging.
   RunPod job; artefacts land back here only as `predictions.jsonl`.
 - Not a deployment. Bedrock Custom Model Import is an external
   one-off step and lives in the consuming application's infra code.
-- Not a runner. The providers (Ollama, Anthropic, Bedrock) that
-  generate `predictions.jsonl` are scoped for the next PR.
+- Runners for local student models (Ollama) and the merged fine-tune
+  are not yet implemented — the `BedrockHaikuRunner` teacher is the
+  only provider wired in today. Adding a new runner is a matter of
+  implementing `listing_parser.runners.base.Runner` (two attributes,
+  one async method) and registering it in the CLI's runner lookup.

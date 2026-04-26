@@ -9,12 +9,23 @@ build/
 
 benchmarks/runs/*/
 !benchmarks/runs/.gitkeep
+# Keep committed artefacts inside run directories: the predictions
+# file is the trained-model's output (cheap to regenerate, but having
+# it in git makes `git log` the single place a reviewer can find
+# "what did the model say for row 42 back in February") and the
+# reports are the thing we actually diff between runs. Sidecars
+# (_row_ids.txt, _log.jsonl) stay ignored — they're resume state
+# and per-attempt diagnostics, not portable artefacts.
+!benchmarks/runs/*/predictions.jsonl
+!benchmarks/runs/*/report.md
+!benchmarks/runs/*/report.json
 
 # Labelling pipeline: row_id sidecars and per-attempt logs are
 # regenerable noise. The `*.json` batch files and `_index.json` ARE
 # committed — they're the authoritative label store.
 data/labelled/_row_ids/
 data/labelled/_log/
+data/*.csv
 
 .env
 .env.*

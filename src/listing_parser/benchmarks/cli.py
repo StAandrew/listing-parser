@@ -1,27 +1,41 @@
-"""`lp-benchmark` CLI — score a predictions file and render a markdown report.
+"""`lp-benchmark` CLI — run a runner, score predictions, render a report.
 
-This is the read-only reporting layer. It does NOT call any LLMs; it
-only consumes:
-  - a gold JSONL (produced by `test_set.py`)
-  - a predictions JSONL (produced by a runner — Ollama/Anthropic/Bedrock,
-    written in a later PR)
+Three subcommands:
 
-and produces:
-  - stdout: a markdown summary fit for pasting into a PR / notes
-  - optional: a `report.json` with the raw aggregate numbers
-  - optional: a `report.md` with the same content that went to stdout
+  * `lp-benchmark run`    — invoke a runner on the gold set and write
+                            `predictions.jsonl`. Calls an LLM.
+  * `lp-benchmark score`  — read predictions + gold, write `report.md`
+                            and `report.json`. Pure / offline.
+  * `lp-benchmark smoke`  — score gold-vs-gold; sanity-check the scorer.
 
-Run:
+The split is deliberate: `score` has zero runtime dependencies beyond
+`pydantic` and the stdlib, so it can run on any machine (including CI)
+without AWS credentials. `run` is the only place that imports boto3 /
+Ollama / etc., and it's lazy-loaded inside the subcommand so `score`
+and `smoke` don't pay the boto3 import cost.
+
+Typical flow:
+
+    # 1. Generate predictions from a provider.
+    lp-benchmark run \\
+        --runner bedrock-haiku \\
+        --gold benchmarks/test_set.jsonl \\
+        --out-dir benchmarks/runs/haiku-4.5-teacher \\
+        --concurrency 4
+
+    # 2. Score them against the gold.
     lp-benchmark score \\
         --gold benchmarks/test_set.jsonl \\
-        --predictions benchmarks/runs/ollama-llama31-8b-q6/predictions.jsonl \\
-        --out-dir benchmarks/runs/ollama-llama31-8b-q6
+        --predictions benchmarks/runs/haiku-4.5-teacher/predictions.jsonl \\
+        --out-dir benchmarks/runs/haiku-4.5-teacher \\
+        --name "haiku-4.5 (teacher)"
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -118,6 +132,106 @@ def cmd_score(args: argparse.Namespace) -> int:
     return 0
 
 
+def _load_env_file(path: Path) -> None:
+    """Minimal .env loader — mirrors `scripts/label_listings.py` so the
+    same credentials file works for both labelling and benchmarking."""
+    if not path.exists():
+        return
+    for raw in path.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+# ---------------------------------------------------------------------------
+# Runner registry.
+#
+# A tiny lookup so the CLI can pick a runner by short slug without
+# hard-coding imports at module scope. This keeps `score` / `smoke`
+# from paying the boto3 import cost when they don't need it.
+# ---------------------------------------------------------------------------
+
+
+def _build_bedrock_haiku(args: argparse.Namespace):
+    # Deferred import so `score` / `smoke` stay boto3-free.
+    from listing_parser.runners.bedrock import BedrockHaikuRunner  # noqa: PLC0415
+
+    return BedrockHaikuRunner(
+        name=args.name_slug or "haiku-4.5-teacher",
+        profile=args.profile,
+        region=args.region,
+        model_id=args.model_id,
+        concurrency=args.concurrency,
+        max_parse_retries=args.max_parse_retries,
+    )
+
+
+_RUNNER_BUILDERS: dict[str, Any] = {
+    "bedrock-haiku": _build_bedrock_haiku,
+}
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    """Invoke a runner on the gold test set and write predictions.jsonl.
+
+    Load order: AWS creds / HF token come from `.env`, mirroring the
+    labelling CLI. Both CLIs touch the same credentials and it saves
+    users from threading env vars through the shell.
+    """
+    from listing_parser.runners.pipeline import (  # noqa: PLC0415
+        format_stats,
+        run_predictions,
+    )
+
+    _load_env_file(args.env_file)
+    # If --profile wasn't explicitly set, fall back to AWS_PROFILE so
+    # `AWS_PROFILE=foo lp-benchmark run ...` works the same as with
+    # `scripts/label_listings.py`.
+    if args.profile is None:
+        args.profile = os.environ.get("AWS_PROFILE")
+
+    gold = Path(args.gold)
+    if not gold.exists():
+        print(f"gold file not found: {gold}", file=sys.stderr)
+        return 2
+
+    out_dir = Path(args.out_dir)
+    builder = _RUNNER_BUILDERS.get(args.runner)
+    if builder is None:
+        print(
+            f"unknown runner: {args.runner!r}; available: "
+            f"{sorted(_RUNNER_BUILDERS)}",
+            file=sys.stderr,
+        )
+        return 2
+    runner = builder(args)
+
+    print(
+        f"runner={runner.name} gold={gold} out={out_dir} "
+        f"concurrency={args.concurrency} resume={not args.no_resume}",
+        file=sys.stderr,
+    )
+
+    stats = run_predictions(
+        runner,
+        gold,
+        out_dir,
+        concurrency=args.concurrency,
+        resume=not args.no_resume,
+        show_progress=not args.no_progress,
+    )
+    print(format_stats(stats, runner.name), file=sys.stderr)
+    print(
+        f"\nwrote {out_dir / 'predictions.jsonl'}\n"
+        f"next: lp-benchmark score --gold {gold} "
+        f"--predictions {out_dir / 'predictions.jsonl'} --out-dir {out_dir}",
+        file=sys.stderr,
+    )
+    return 0 if stats.n_parse_failed == 0 else 1
+
+
 def cmd_smoke(args: argparse.Namespace) -> int:
     """Score the gold against itself. Expect parse_rate = schema_rate = macro_accuracy = 1.0.
 
@@ -166,6 +280,64 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="lp-benchmark")
     sub = p.add_subparsers(dest="cmd", required=True)
 
+    # ---- run ---------------------------------------------------------
+    pr = sub.add_parser(
+        "run",
+        help="invoke a runner on the gold set and write predictions.jsonl",
+    )
+    pr.add_argument(
+        "--runner",
+        default="bedrock-haiku",
+        choices=sorted(_RUNNER_BUILDERS),
+        help="which runner to invoke (default: bedrock-haiku)",
+    )
+    pr.add_argument("--gold", required=True)
+    pr.add_argument(
+        "--out-dir",
+        required=True,
+        help="output directory (one per run); predictions.jsonl + sidecars land here",
+    )
+    pr.add_argument(
+        "--name-slug",
+        default=None,
+        help="override the runner's `name` attribute (appears in the report header)",
+    )
+    pr.add_argument(
+        "--concurrency",
+        type=int,
+        default=4,
+        help="max in-flight requests (default: 4 — avoids Bedrock throttles on default quotas)",
+    )
+    pr.add_argument(
+        "--max-parse-retries",
+        type=int,
+        default=1,
+        help=(
+            "retries on JSON parse failure (default: 1). "
+            "Set to 0 to measure first-pass rate honestly."
+        ),
+    )
+    pr.add_argument("--profile", default=None, help="AWS profile (default: $AWS_PROFILE)")
+    pr.add_argument("--region", default="eu-west-2")
+    pr.add_argument(
+        "--model-id",
+        default="global.anthropic.claude-haiku-4-5-20251001-v1:0",
+        help="Bedrock model id / inference profile (default: Haiku 4.5 global)",
+    )
+    pr.add_argument("--env-file", type=Path, default=Path(".env"))
+    pr.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="ignore the _row_ids.txt sidecar and re-run every row",
+    )
+    pr.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="disable the live status line (useful when piping stderr to a log)",
+    )
+    pr.set_defaults(func=cmd_run)
+
+    # ---- score -------------------------------------------------------
     ps = sub.add_parser("score", help="score predictions against gold")
     ps.add_argument("--gold", required=True)
     ps.add_argument("--predictions", required=True)
@@ -173,6 +345,7 @@ def build_parser() -> argparse.ArgumentParser:
     ps.add_argument("--name", default=None, help="run name for the report header")
     ps.set_defaults(func=cmd_score)
 
+    # ---- smoke -------------------------------------------------------
     pk = sub.add_parser(
         "smoke", help="score gold-vs-gold; expect 1.0 on every metric"
     )
