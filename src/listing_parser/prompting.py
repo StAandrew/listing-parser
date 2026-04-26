@@ -73,8 +73,9 @@ __all__ = [
 # from the source tree; we fall back to the cwd for people running
 # scripts from elsewhere.
 _PROMPT_CANDIDATES = (
-    Path(__file__).resolve().parents[2] / "prompt.md",
-    Path.cwd() / "prompt.md",
+    Path(__file__).resolve().parent / "_assets" / "prompt.md",       # packaged
+    Path(__file__).resolve().parents[2] / "prompt.md",                # repo root
+    Path.cwd() / "prompt.md",                                          # fallback
 )
 _EXAMPLES_CANDIDATES = (
     Path(__file__).resolve().parents[2] / "examples.json",
