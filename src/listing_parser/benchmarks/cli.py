@@ -159,7 +159,20 @@ def _build_bedrock_haiku(args: argparse.Namespace):
     from listing_parser.runners.bedrock import BedrockHaikuRunner  # noqa: PLC0415
 
     return BedrockHaikuRunner(
-        name=args.name_slug or "haiku-4.5-teacher",
+        name=args.name_slug,
+        profile=args.profile,
+        region=args.region,
+        model_id=args.model_id,
+        concurrency=args.concurrency,
+        max_parse_retries=args.max_parse_retries,
+    )
+
+
+def _build_bedrock_llama(args: argparse.Namespace):
+    from listing_parser.runners.bedrock import BedrockLlamaRunner  # noqa: PLC0415
+
+    return BedrockLlamaRunner(
+        name=args.name_slug,
         profile=args.profile,
         region=args.region,
         model_id=args.model_id,
@@ -170,6 +183,7 @@ def _build_bedrock_haiku(args: argparse.Namespace):
 
 _RUNNER_BUILDERS: dict[str, Any] = {
     "bedrock-haiku": _build_bedrock_haiku,
+    "bedrock-llama": _build_bedrock_llama,
 }
 
 
@@ -317,12 +331,27 @@ def build_parser() -> argparse.ArgumentParser:
             "Set to 0 to measure first-pass rate honestly."
         ),
     )
-    pr.add_argument("--profile", default=None, help="AWS profile (default: $AWS_PROFILE)")
-    pr.add_argument("--region", default="eu-west-2")
+    pr.add_argument(
+        "--profile",
+        default=None,
+        help="AWS profile (default: $AWS_PROFILE)",
+    )
+    pr.add_argument(
+        "--region",
+        default=None,
+        help=(
+            "AWS region override. Default is runner-specific "
+            "(haiku=eu-west-2, llama=us-west-2)."
+        ),
+    )
     pr.add_argument(
         "--model-id",
-        default="global.anthropic.claude-haiku-4-5-20251001-v1:0",
-        help="Bedrock model id / inference profile (default: Haiku 4.5 global)",
+        default=None,
+        help=(
+            "Bedrock model id / inference profile. Default is runner-specific "
+            "(haiku=global.anthropic.claude-haiku-4-5-20251001-v1:0, "
+            "llama=meta.llama3-1-8b-instruct-v1:0)."
+        ),
     )
     pr.add_argument("--env-file", type=Path, default=Path(".env"))
     pr.add_argument(

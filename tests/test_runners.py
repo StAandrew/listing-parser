@@ -339,6 +339,29 @@ def test_cli_run_subcommand_exists() -> None:
     assert args.cmd == "run"
     assert args.runner == "bedrock-haiku"
     assert args.concurrency == 4  # default
+    # Region / model-id default to None so runner-class defaults win.
+    # This is what lets `--runner bedrock-llama` use us-west-2 without
+    # a `--region us-west-2` flag.
+    assert args.region is None
+    assert args.model_id is None
+
+
+def test_cli_run_knows_about_bedrock_llama() -> None:
+    """Guard against silent registry regressions: if someone deletes
+    `bedrock-llama` from `_RUNNER_BUILDERS` the baseline report in
+    `benchmarks/runs/llama-3.1-8b-base/` becomes unreproducible.
+    """
+    from listing_parser.benchmarks.cli import _RUNNER_BUILDERS, build_parser
+
+    assert "bedrock-llama" in _RUNNER_BUILDERS
+    parser = build_parser()
+    args = parser.parse_args([
+        "run",
+        "--runner", "bedrock-llama",
+        "--gold", "g.jsonl",
+        "--out-dir", "o",
+    ])
+    assert args.runner == "bedrock-llama"
 
 
 def test_cli_run_returns_2_on_missing_gold(tmp_path: Path, capsys) -> None:
@@ -354,3 +377,68 @@ def test_cli_run_returns_2_on_missing_gold(tmp_path: Path, capsys) -> None:
     assert rc == 2
     err = capsys.readouterr().err
     assert "gold file not found" in err
+
+
+# ---------------------------------------------------------------------------
+# Bedrock runner defaults — guard against silent drift between the
+# two provider configs. These don't hit the network; they only check
+# the class-level defaults, which are what makes `lp-benchmark run
+# --runner bedrock-llama` do the right thing without extra flags.
+# ---------------------------------------------------------------------------
+
+
+def test_bedrock_haiku_defaults_enable_caching_and_use_eu_west_2() -> None:
+    from listing_parser.runners.bedrock import BedrockHaikuRunner
+
+    r = BedrockHaikuRunner()
+    assert r.name == "haiku-4.5-teacher"
+    assert r._region == "eu-west-2"
+    # Prompt caching is only supported on the `global.*` Anthropic
+    # inference profiles; if someone switches to `eu.*` the cachePoint
+    # directive silently becomes a no-op (confirmed empirically during
+    # labelling-pipeline bring-up).
+    assert r._model_id.startswith("global.anthropic.claude-haiku-4-5-")
+    assert r._use_cache is True
+    # Teacher runs at 0.2 to match labelling — so teacher-vs-gold is
+    # apples-to-apples with the labels the teacher originally produced.
+    assert r._temperature == 0.2
+
+
+def test_bedrock_llama_defaults_disable_caching_and_use_us_west_2() -> None:
+    from listing_parser.runners.bedrock import BedrockLlamaRunner
+
+    r = BedrockLlamaRunner()
+    assert r.name == "llama-3.1-8b-base"
+    # Llama 3.1 8B ON_DEMAND is us-west-2 only — not eu-west-2 where
+    # the teacher lives.
+    assert r._region == "us-west-2"
+    assert r._model_id == "meta.llama3-1-8b-instruct-v1:0"
+    # Bedrock's Llama integration rejects `cachePoint` with
+    # ValidationException, so caching MUST be off. Turning it back on
+    # would break the whole run, not just silently fail.
+    assert r._use_cache is False
+    # Greedy decoding on the baseline — we want reproducible numbers,
+    # not sampling-noise variance across re-runs.
+    assert r._temperature == 0.0
+
+
+def test_bedrock_runner_constructor_overrides_respected() -> None:
+    """Every default is a kwarg; regression test so a subclass adding
+    new defaults doesn't lose the per-instance override path.
+    """
+    from listing_parser.runners.bedrock import BedrockLlamaRunner
+
+    r = BedrockLlamaRunner(
+        name="custom",
+        region="ap-southeast-1",
+        model_id="meta.llama3-3-70b-instruct-v1:0",
+        temperature=0.5,
+        use_cache=True,
+        max_parse_retries=3,
+    )
+    assert r.name == "custom"
+    assert r._region == "ap-southeast-1"
+    assert r._model_id == "meta.llama3-3-70b-instruct-v1:0"
+    assert r._temperature == 0.5
+    assert r._use_cache is True
+    assert r._max_parse_retries == 3

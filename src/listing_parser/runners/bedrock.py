@@ -1,21 +1,25 @@
-"""Bedrock-backed runners — today that's Haiku 4.5 (the teacher).
+"""Bedrock-backed runners.
 
-We reuse `listing_parser.labelling.teacher` verbatim: the Converse-API
-client, the semaphore-guarded async wrapper, the throttle backoff, and
-the 1h prompt-caching directive all apply identically in the runner
-context. The one functional difference is what we do with the model's
-output:
+Two providers today, both going through the same Converse-API client:
 
-    labelling → clean + validate + retry on either failure
-    runners   → parse only; no cleaning, no schema retry
+* `BedrockHaikuRunner` — Haiku 4.5, the teacher baseline. What
+  downstream runs are compared against. Uses `cachePoint` on the
+  system block so the 5.5k-token prompt is billed at cache-read rates
+  after the first call in a run.
+* `BedrockLlamaRunner`  — Llama 3.1 8B Instruct, the student base
+  model baseline. Matches what a fine-tune will be served as via
+  Bedrock Custom Model Import. Does NOT use `cachePoint` — Meta
+  models on Bedrock reject the directive with ValidationException.
 
-Cleaning would lie to the scorer about what the model produced;
-schema-retry would mask exactly the regression `schema_rate` is there
-to detect. So the runner is deliberately thinner than the labeller.
+Both reuse `labelling.teacher.call_teacher` for connection, throttle
+backoff, and semaphore-bounded concurrency; the shared base in this
+module adds only the runner-facing concerns (parse-and-retry, prompt
+assembly, `RunnerResult` shaping).
 
-A future "Bedrock base-model Llama" runner will share this module;
-we'll factor a `_BedrockRunnerBase` out when that second caller lands
-rather than speculating on the abstraction now.
+When a third Bedrock provider lands (e.g. the merged fine-tune through
+Bedrock CMI) it should subclass `_BedrockRunnerBase` with its own
+`model_id` default, temperature, and `use_cache` flag; no other
+changes should be needed.
 """
 
 from __future__ import annotations
@@ -33,53 +37,70 @@ from listing_parser.runners._output import ParseAttempt, parse_output_json, pars
 from listing_parser.runners.base import ListingType, RunnerResult
 
 
-class BedrockHaikuRunner:
-    """Runner that calls Haiku 4.5 on Bedrock (the teacher model).
+class _BedrockRunnerBase:
+    """Shared plumbing for any Bedrock-backed runner.
 
-    Baseline for everything else: scoring a fine-tune against the
-    teacher tells us whether we've caught up to the training signal
-    we paid for. The teacher's own number is not 1.0 on the gold set —
-    the gold was labelled at temperature 0.2 and we re-infer with the
-    same temperature, so sampling noise alone drops it a few percent.
-    That's fine; it's a meaningful ceiling, not an artefact.
+    Subclasses only need to set class-level defaults (model id,
+    temperature, cache flag) and optionally override the runner
+    `name`. The async `predict` method is identical across providers —
+    the Haiku vs Llama distinction lives entirely in constructor
+    defaults plus the `use_cache` wire-level toggle.
 
-    Concurrency is bounded by the semaphore we create at construction
-    time; pass `--concurrency` to the CLI to control it. We default
-    to 4 which empirically avoids Bedrock throttles on default quotas.
+    Attributes populated from kwargs (all overridable per instance):
+      * `_model_id`   Bedrock model id or inference profile
+      * `_region`     AWS region
+      * `_profile`    AWS profile (from env by default)
+      * `_temperature` / `_max_tokens` inference config
+      * `_use_cache`  whether to wrap the system block in a cachePoint
+
+    Cached state:
+      * `_system_prompt`  rendered once per instance (~5.5k tokens;
+                          file reads + vocab-block rendering aren't
+                          free and the output is deterministic)
+      * `_semaphore`      built lazily on first predict() call so the
+                          runner can be constructed outside an event
+                          loop without tripping "no current loop"
     """
 
-    name: str
+    # --- defaults; subclasses override ------------------------------------
+    _DEFAULT_NAME: str = "bedrock"
+    _DEFAULT_MODEL_ID: str = DEFAULT_MODEL_ID
+    _DEFAULT_REGION: str = DEFAULT_REGION
+    _DEFAULT_TEMPERATURE: float = 0.0
+    _DEFAULT_USE_CACHE: bool = False
 
     def __init__(
         self,
         *,
-        name: str = "haiku-4.5-teacher",
+        name: str | None = None,
         profile: str | None = None,
-        region: str = DEFAULT_REGION,
-        model_id: str = DEFAULT_MODEL_ID,
+        region: str | None = None,
+        model_id: str | None = None,
         concurrency: int = 4,
         max_tokens: int = 2048,
-        temperature: float = 0.2,
+        temperature: float | None = None,
+        use_cache: bool | None = None,
         max_parse_retries: int = 1,
         on_throttle: Any = None,
     ) -> None:
-        self.name = name
+        self.name = name or self._DEFAULT_NAME
         self._profile = profile
-        self._region = region
-        self._model_id = model_id
+        self._region = region or self._DEFAULT_REGION
+        self._model_id = model_id or self._DEFAULT_MODEL_ID
         self._max_tokens = max_tokens
-        self._temperature = temperature
+        self._temperature = (
+            self._DEFAULT_TEMPERATURE if temperature is None else temperature
+        )
+        self._use_cache = (
+            self._DEFAULT_USE_CACHE if use_cache is None else use_cache
+        )
         self._max_parse_retries = max_parse_retries
         self._on_throttle = on_throttle
-        # Built lazily so tests that never call `predict` don't need to
-        # import asyncio loops.
         self._semaphore: asyncio.Semaphore | None = None
         self._semaphore_size = concurrency
-        # Cache the system prompt once per runner instance — it's ~5.5k
-        # tokens and `build_system_prompt` reads files + renders vocab
-        # blocks. Bedrock still caches across the wire via `cachePoint`;
-        # this cache is just in-process so we don't re-render per call.
         self._system_prompt: str | None = None
+
+    # --- lazy getters -----------------------------------------------------
 
     def _get_semaphore(self) -> asyncio.Semaphore:
         # Defer construction — `asyncio.Semaphore` binds to the current
@@ -95,6 +116,8 @@ class BedrockHaikuRunner:
             self._system_prompt = build_system_prompt()
         return self._system_prompt
 
+    # --- the Runner Protocol method --------------------------------------
+
     async def predict(
         self,
         description: str,
@@ -106,7 +129,7 @@ class BedrockHaikuRunner:
 
         async def _call(turns: tuple[str, ...]) -> ParseAttempt:
             # Hand the current turns (first attempt or correction retry)
-            # to the teacher client. Usage counters are captured per-
+            # to the teacher client. Usage counters are captured per
             # call and merged into the last ParseAttempt we return.
             resp = await call_teacher(
                 system_prompt,
@@ -118,6 +141,7 @@ class BedrockHaikuRunner:
                 max_tokens=self._max_tokens,
                 temperature=self._temperature,
                 on_throttle=self._on_throttle,
+                use_cache=self._use_cache,
             )
             return ParseAttempt(
                 raw=resp.text,
@@ -137,3 +161,79 @@ class BedrockHaikuRunner:
             max_parse_retries=self._max_parse_retries,
         )
         return RunnerResult(pred=pred, raw=raw, error=error, usage=usage)
+
+
+class BedrockHaikuRunner(_BedrockRunnerBase):
+    """Runner that calls Haiku 4.5 on Bedrock (the teacher model).
+
+    Baseline for everything else: scoring a fine-tune against the
+    teacher tells us whether we've caught up to the training signal
+    we paid for. The teacher's own number is not 1.0 on the gold set —
+    the gold was labelled at temperature 0.2 and we re-infer with the
+    same temperature, so sampling noise alone drops it a few percent.
+    That's fine; it's a meaningful ceiling, not an artefact.
+
+    Defaults:
+      * model = `global.anthropic.claude-haiku-4-5-20251001-v1:0`
+        (the only inference profile supporting prompt caching).
+      * temperature = 0.2 — matches labelling so teacher-vs-gold is a
+        like-for-like comparison.
+      * use_cache = True — the Converse API accepts `cachePoint` for
+        Anthropic models.
+
+    Concurrency default is 4; Bedrock throttles kick in around 6–8 on
+    default quotas.
+    """
+
+    _DEFAULT_NAME = "haiku-4.5-teacher"
+    _DEFAULT_MODEL_ID = DEFAULT_MODEL_ID
+    _DEFAULT_REGION = DEFAULT_REGION  # eu-west-2
+    _DEFAULT_TEMPERATURE = 0.2
+    _DEFAULT_USE_CACHE = True
+
+
+class BedrockLlamaRunner(_BedrockRunnerBase):
+    """Runner that calls Llama 3.1 8B Instruct on Bedrock — the student
+    base-model baseline.
+
+    Why this is the right baseline (rather than Ollama locally):
+      * The fine-tune target is Llama 3.1 8B served at fp16/bf16 via
+        Bedrock Custom Model Import. A Q4_K_M Ollama baseline would
+        under-report the base model's capability and make the
+        fine-tune look artificially better.
+      * Bedrock model ids are versioned and stable, so numbers in
+        `report.md` are reproducible 6 months from now — an HF GGUF
+        digest is not, in practice.
+
+    Defaults:
+      * model = `meta.llama3-1-8b-instruct-v1:0` (ON_DEMAND in
+        us-west-2; switch to `us.meta.llama3-1-8b-instruct-v1:0` if
+        quota routing becomes useful).
+      * region = `us-west-2` — where the model's ON_DEMAND inference
+        is available. The Haiku teacher runs in eu-west-2; these two
+        runs therefore hit different regions, which is fine — neither
+        the scorer nor predictions.jsonl cares.
+      * temperature = 0.0 — honest greedy decoding gives the most
+        reproducible "what does this base model actually produce"
+        signal. Re-running should reproduce.
+      * use_cache = False — Bedrock's Llama integration returns
+        ValidationException on `cachePoint`. With our ~5.5k-token
+        system prompt + 60 rows that's roughly 330k input tokens
+        non-cached, or about $0.05 at Llama 3.1 8B on-demand pricing.
+        Cheap enough to not bother.
+
+    Expectations, so there are no surprises:
+      * parse_rate will likely be 50-85%. Llama 3.1 8B follows closed-
+        vocab JSON instructions much worse than Haiku. That's the gap
+        fine-tuning is meant to close; don't inflate it with extra
+        parse retries.
+      * macro_accuracy will be dominated by "field absent in gold,
+        absent in prediction" agreement, masking the real regression.
+        The per-field breakdown in `report.md` is what matters.
+    """
+
+    _DEFAULT_NAME = "llama-3.1-8b-base"
+    _DEFAULT_MODEL_ID = "meta.llama3-1-8b-instruct-v1:0"
+    _DEFAULT_REGION = "us-west-2"
+    _DEFAULT_TEMPERATURE = 0.0
+    _DEFAULT_USE_CACHE = False

@@ -18,11 +18,12 @@ touching eval logic.
 """
 
 from listing_parser.runners.base import Runner, RunnerResult
-from listing_parser.runners.bedrock import BedrockHaikuRunner
+from listing_parser.runners.bedrock import BedrockHaikuRunner, BedrockLlamaRunner
 from listing_parser.runners.pipeline import RunStats, run_predictions
 
 __all__ = [
     "BedrockHaikuRunner",
+    "BedrockLlamaRunner",
     "RunStats",
     "Runner",
     "RunnerResult",

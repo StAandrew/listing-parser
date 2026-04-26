@@ -31,9 +31,9 @@ End-to-end pipeline this repo owns:
 | Prompt + schema design | ✅ `prompt.md`, `examples.json` |
 | Teacher labelling pipeline | ✅ `src/listing_parser/labelling/` |
 | Frozen test set + scorer | ✅ this repo |
-| Student runners (Bedrock Haiku teacher) | ✅ `src/listing_parser/runners/` |
-| Student runners (Ollama / Bedrock base-model / fine-tune) | ☐ next |
-| Fine-tune (Unsloth, Llama 3.1 8B QLoRA on RunPod) | ☐ |
+| Teacher baseline on gold | ✅ `benchmarks/runs/haiku-4.5-teacher/report.md` |
+| Base-model baseline (Llama 3.1 8B via Bedrock) | ✅ `benchmarks/runs/llama-3.1-8b-base/report.md` |
+| Fine-tune (Unsloth, Llama 3.1 8B QLoRA on RunPod) | ☐ next |
 | Bedrock Custom Model Import | ☐ |
 
 ## Repo layout
@@ -152,12 +152,45 @@ re-calls the model for every gold row; the scorer reads the output
 offline.
 
 ```bash
+# Teacher baseline — Haiku 4.5, eu-west-2, uses prompt caching.
 AWS_PROFILE=XXXXXXX lp-benchmark run \
     --runner bedrock-haiku \
     --gold benchmarks/test_set.jsonl \
     --out-dir benchmarks/runs/haiku-4.5-teacher \
     --concurrency 4
+
+# Student base-model baseline — Llama 3.1 8B Instruct on Bedrock,
+# us-west-2, greedy decoding, no prompt caching. Matches what the
+# fine-tune will be served as via Bedrock CMI.
+AWS_PROFILE=XXXXXXX lp-benchmark run \
+    --runner bedrock-llama \
+    --gold benchmarks/test_set.jsonl \
+    --out-dir benchmarks/runs/llama-3.1-8b-base \
+    --concurrency 4
 ```
+
+Two runners ship today:
+
+- `bedrock-haiku` — Claude Haiku 4.5 (the teacher). Defaults: region
+  `eu-west-2`, model `global.anthropic.claude-haiku-4-5-20251001-v1:0`,
+  temperature 0.2, prompt caching on. The 1h system-prompt cache makes
+  repeat runs effectively free after the first ~4 rows.
+- `bedrock-llama` — Llama 3.1 8B Instruct on Bedrock (the student base
+  model). Defaults: region `us-west-2`, model
+  `meta.llama3-1-8b-instruct-v1:0`, temperature 0.0, prompt caching
+  **off** (Bedrock's Llama integration rejects the `cachePoint`
+  directive). This is the baseline the fine-tune has to beat — same
+  weights family, same serving precision, no laptop-quantization
+  confounds.
+
+Why not Ollama + `hf.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF:Q4_K_M`
+as the baseline? Q4_K_M routinely drops 1–3 points on structured-
+extraction tasks vs fp16/bf16, and the fine-tune target is Bedrock
+CMI, which serves bf16. A laptop-quant baseline would under-report
+the base model's capability and make the fine-tune look artificially
+better. Bedrock model ids are also versioned and stable, so
+`report.md` numbers stay reproducible — an HF GGUF digest is not, in
+practice (the repo can be re-quantized or renamed).
 
 What lands in `--out-dir`:
 
@@ -174,15 +207,17 @@ same command; rows already present in the sidecar are skipped. Pass
 
 Runner options:
 
-- `--runner bedrock-haiku` is the only implementation today (the
-  teacher model, Haiku 4.5 on Bedrock). Ollama and Bedrock base-model
-  Llama land in a follow-up PR.
+- `--runner {bedrock-haiku,bedrock-llama}` — picks the provider.
+- `--region` / `--model-id` override the runner's defaults (useful
+  for pinning an inference profile like
+  `us.meta.llama3-1-8b-instruct-v1:0` when an ON_DEMAND quota is
+  saturated).
 - `--max-parse-retries` controls how many times a JSON-parse failure
   gets a correction prompt retry. Default 1; set 0 to measure the
   model's first-pass parse rate honestly.
 - **No schema-validation retry.** The scorer's `schema_rate` metric
-  catches that — retrying here would hide regressions that a
-  production inference stack would still have to live with.
+  catches that — retrying would hide regressions that a production
+  inference stack would still have to live with.
 
 ### 3. Score a run
 
@@ -454,7 +489,8 @@ before merging.
 - Not a deployment. Bedrock Custom Model Import is an external
   one-off step and lives in the consuming application's infra code.
 - Runners for local student models (Ollama) and the merged fine-tune
-  are not yet implemented — the `BedrockHaikuRunner` teacher is the
-  only provider wired in today. Adding a new runner is a matter of
-  implementing `listing_parser.runners.base.Runner` (two attributes,
-  one async method) and registering it in the CLI's runner lookup.
+  are not yet implemented — `BedrockHaikuRunner` (teacher) and
+  `BedrockLlamaRunner` (student base model) are the providers wired
+  in today. Adding a new runner is a matter of implementing
+  `listing_parser.runners.base.Runner` (two attributes, one async
+  method) and registering it in the CLI's runner lookup.

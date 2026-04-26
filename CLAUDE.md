@@ -119,6 +119,13 @@ AWS_PROFILE=XXXXXXX lp-benchmark run \
  --out-dir benchmarks/runs/<slug> \
  --concurrency 4
 
+# Generate predictions for a run (student base model — Llama 3.1 8B)
+AWS_PROFILE=XXXXXXX lp-benchmark run \
+ --runner bedrock-llama \
+ --gold benchmarks/test_set.jsonl \
+ --out-dir benchmarks/runs/<slug> \
+ --concurrency 4
+
 # Score a run
 lp-benchmark score \
  --gold benchmarks/test_set.jsonl \

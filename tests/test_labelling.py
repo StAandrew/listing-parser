@@ -13,8 +13,6 @@ import io
 import json
 from pathlib import Path
 
-import pytest
-
 from listing_parser.labelling.progress import (
     ProgressReporter,
     _fmt_duration,
@@ -25,7 +23,6 @@ from listing_parser.labelling.sinks import (
     LabelledRow,
     regenerate_index,
 )
-
 
 # ---------------------------------------------------------------------------
 # LabelledFileWriter — append, resume, flush idempotency.
@@ -218,3 +215,69 @@ def test_progress_bar_is_fixed_width() -> None:
     # from the previous render.
     for pct in (0, 13, 50, 99, 100):
         assert len(_progress_bar(pct, width=20)) == 20
+
+
+# ---------------------------------------------------------------------------
+# teacher.use_cache toggle — the Haiku/Llama wire difference.
+#
+# Bedrock Meta Llama models reject `cachePoint` with a
+# ValidationException. Anthropic + Nova accept it. We pin the wire-
+# level shape so a future refactor can't silently turn caching back
+# on for Llama (which would make `lp-benchmark run --runner
+# bedrock-llama` fail on every row).
+# ---------------------------------------------------------------------------
+
+
+def test_sync_converse_includes_cache_point_when_enabled() -> None:
+    from listing_parser.labelling.teacher import _sync_converse
+
+    captured: dict = {}
+
+    class _FakeClient:
+        def converse(self, **kwargs):
+            captured.update(kwargs)
+            return {
+                "output": {"message": {"content": [{"text": "ok"}]}},
+                "usage": {"inputTokens": 1, "outputTokens": 1},
+            }
+
+    _sync_converse(
+        _FakeClient(),
+        "model-id",
+        "sys prompt",
+        ("user turn",),
+        max_tokens=10,
+        temperature=0.0,
+        use_cache=True,
+    )
+    system_blocks = captured["system"]
+    assert {"cachePoint": {"type": "default", "ttl": "1h"}} in system_blocks
+    assert any(b.get("text") == "sys prompt" for b in system_blocks)
+
+
+def test_sync_converse_omits_cache_point_when_disabled() -> None:
+    from listing_parser.labelling.teacher import _sync_converse
+
+    captured: dict = {}
+
+    class _FakeClient:
+        def converse(self, **kwargs):
+            captured.update(kwargs)
+            return {
+                "output": {"message": {"content": [{"text": "ok"}]}},
+                "usage": {"inputTokens": 1, "outputTokens": 1},
+            }
+
+    _sync_converse(
+        _FakeClient(),
+        "meta.llama3-1-8b-instruct-v1:0",
+        "sys prompt",
+        ("user turn",),
+        max_tokens=10,
+        temperature=0.0,
+        use_cache=False,
+    )
+    system_blocks = captured["system"]
+    # Plain block only; no cachePoint directive. Bedrock's Llama
+    # integration raises ValidationException otherwise.
+    assert system_blocks == [{"text": "sys prompt"}]

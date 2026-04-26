@@ -28,7 +28,7 @@ gives us:
 |---|---|---|
 | `base.py` | `Runner` Protocol + `RunnerResult` dataclass. Pure types. | No. |
 | `_output.py` | Fence stripping + parse-and-retry. Called by runner impls, not by the pipeline directly. | No. |
-| `bedrock.py` | `BedrockHaikuRunner` — wraps `labelling/teacher.py` verbatim. | Yes: Bedrock Converse API. |
+| `bedrock.py` | `_BedrockRunnerBase` + `BedrockHaikuRunner` (teacher, Anthropic, caching on) + `BedrockLlamaRunner` (student base, Meta, caching off). Wraps `labelling/teacher.py`. | Yes: Bedrock Converse API. |
 | `pipeline.py` | Gold → predictions driver: gold loading, resume, concurrency, sidecar/log writers. | Yes: filesystem. |
 
 ## Hard rules
@@ -68,6 +68,22 @@ gives us:
    `lp-benchmark score`/`smoke` don't pay for provider dependencies.
 5. Add unit tests in `tests/test_runners.py` using a fake runner (see
    the existing `_FakeRunner` pattern). Do NOT hit the provider in CI.
+
+### If the new runner is also Bedrock-backed
+
+Subclass `_BedrockRunnerBase` instead of re-implementing from
+scratch. Set four class-level defaults (`_DEFAULT_NAME`,
+`_DEFAULT_MODEL_ID`, `_DEFAULT_REGION`, `_DEFAULT_TEMPERATURE`,
+`_DEFAULT_USE_CACHE`) and that's it. See `BedrockHaikuRunner` and
+`BedrockLlamaRunner` for the pattern — neither has a custom
+`__init__` or `predict`.
+
+The `_DEFAULT_USE_CACHE` flag is load-bearing: Anthropic + Nova
+models accept `cachePoint` on the Converse system block, Meta's
+Llama integration returns ValidationException. Getting it wrong
+breaks *every* row of a run, so it's pinned with a unit test in
+`tests/test_runners.py` and a wire-level test in
+`tests/test_labelling.py` (`test_sync_converse_*`).
 
 ## Resume semantics
 

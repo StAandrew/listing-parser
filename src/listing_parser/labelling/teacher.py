@@ -92,6 +92,16 @@ def _system_with_cache(system_prompt: str) -> list[dict[str, Any]]:
     ]
 
 
+def _system_plain(system_prompt: str) -> list[dict[str, Any]]:
+    """Plain (non-cached) system block.
+
+    Bedrock Llama models don't accept `cachePoint` — the Converse API
+    rejects the directive with a ValidationException. This is the
+    fallback shape for providers without prompt caching.
+    """
+    return [{"text": system_prompt}]
+
+
 def _user_messages(*user_turns: str) -> list[dict[str, Any]]:
     """Build the `messages` list from one or more user turns.
 
@@ -134,20 +144,30 @@ def _sync_converse(
     user_turns: tuple[str, ...],
     max_tokens: int,
     temperature: float,
+    use_cache: bool,
 ) -> TeacherResponse:
     """One synchronous Bedrock call. No retries here — that's the job of
     the async wrapper so it can share the semaphore with sleeping tasks.
 
     Raises `_Throttled` on ThrottlingException so the wrapper knows to
     back off; everything else propagates.
+
+    `use_cache` toggles the `cachePoint` directive on the system block.
+    Anthropic + Nova models support it; Meta Llama does not and returns
+    ValidationException if the directive is present. Callers pass
+    `use_cache=False` for Llama; default-True preserves the original
+    labelling behaviour.
     """
     from botocore.exceptions import ClientError  # noqa: PLC0415
 
     started = time.monotonic()
+    system_block = _system_with_cache(system_prompt) if use_cache else _system_plain(
+        system_prompt
+    )
     try:
         resp = client.converse(
             modelId=model_id,
-            system=_system_with_cache(system_prompt),
+            system=system_block,
             messages=_user_messages(*user_turns),
             inferenceConfig={
                 "maxTokens": max_tokens,
@@ -190,6 +210,7 @@ async def call_teacher(
     temperature: float = 0.2,
     max_backoff_attempts: int = 6,
     on_throttle: Callable[[], Awaitable[None]] | None = None,
+    use_cache: bool = True,
 ) -> TeacherResponse:
     """Async, semaphore-bounded, backoff-retried Bedrock call.
 
@@ -206,6 +227,10 @@ async def call_teacher(
     ThrottlingException is caught (before backing off). Lets the caller
     surface throttle pressure in the UI without this module having to
     know about the progress reporter.
+
+    `use_cache` wraps the system block in a `cachePoint` directive. On
+    for Anthropic / Nova (the default, matching the teacher's original
+    behaviour); off for Meta Llama which rejects the directive.
     """
     client = _bedrock_client(profile, region)
 
@@ -220,6 +245,7 @@ async def call_teacher(
                     user_turns,
                     max_tokens,
                     temperature,
+                    use_cache,
                 )
             except _Throttled:
                 if on_throttle is not None:
