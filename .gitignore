@@ -1,0 +1,20 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+
+benchmarks/runs/*/
+!benchmarks/runs/.gitkeep
+
+# Labelling pipeline: row_id sidecars and per-attempt logs are
+# regenerable noise. The `*.json` batch files and `_index.json` ARE
+# committed — they're the authoritative label store.
+data/labelled/_row_ids/
+data/labelled/_log/
+
+.env
+.env.*

@@ -1,0 +1,152 @@
+{
+  "_meta": {
+    "purpose": "Worked examples of the description-extraction schema. Each example is a real listing description plus a hand-labelled extraction. Use these as few-shot examples for Claude/GPT labelling runs, and as regression fixtures once the fine-tuned model is in place.",
+    "schema_source": "prompt.md",
+    "vocab_source": "src/listing_parser/schema.py (PROPERTY_TYPES, AMENITIES_*, PARKING_TYPES, etc.)"
+  },
+
+  "examples": [
+    {
+      "listing_id": 1602,
+      "target": "Rightmove",
+      "listing_type": "Rent",
+      "input": "Interior\n\nThis modern two-bedroom apartment is situated on the 15th floor, offering bright and well-designed living space with elevated city views. The property features a spacious open-plan living and dining area with large windows allowing plenty of natural light, alongside a contemporary fitted kitchen with integrated appliances. Both bedrooms are well proportioned, providing comfortable accommodation, and are served by a stylish modern bathroom. Finished in neutral tones throughout, the apartment is ideal for professionals or sharers.\n\nBuilding Amenities\n\nSituated within a modern, professionally managed development, residents benefit from secure entry access, lift facilities, and well-maintained communal areas. The building offers a comfortable and convenient city living environment.\n\nTransport & Location\n\nThe property is conveniently located close to Manchester Oxford Road station, approximately a 5\u20137 minute walk, providing excellent rail connections across the city and beyond. Manchester city centre, universities, shops, restaurants, and leisure amenities are all within easy walking distance.\n\n_____________________________________\n- No Smokers\n- Bills not included\n- Holding deposit: 1-week rent\n- Tenancy deposit: 5-week rent\n- No Company Let",
+      "output": {
+        "property_type": "Flat",
+        "beds": 2,
+        "baths": 1,
+        "floors_occupied": [15],
+        "amenities_interior": ["Open plan living area"],
+        "amenities_facilities": ["Elevator"],
+        "rent": {
+          "bills_included": "None",
+          "deposit_weeks": 5,
+          "smokers_allowed": false
+        },
+        "flags": {},
+        "nearby_mentions": [
+          {"name": "Manchester Oxford Road station", "walk_minutes": 6}
+        ],
+        "evidence": {
+          "property_type": "modern two-bedroom apartment",
+          "beds": "two-bedroom apartment",
+          "baths": "served by a stylish modern bathroom",
+          "floors_occupied.15": "situated on the 15th floor",
+          "amenities_interior.Open plan living area": "spacious open-plan living and dining area",
+          "amenities_facilities.Elevator": "lift facilities",
+          "rent.bills_included": "Bills not included",
+          "rent.deposit_weeks": "Tenancy deposit: 5-week rent",
+          "rent.smokers_allowed": "No Smokers",
+          "nearby_mentions.Manchester Oxford Road station": "Manchester Oxford Road station, approximately a 5\u20137 minute walk"
+        }
+      },
+      "labelling_notes": [
+        "'integrated appliances' is too vague to map to a specific appliance amenity — left out.",
+        "'secure entry access' is not in the controlled vocabulary — left out.",
+        "'city views' / 'natural light' are marketing fluff — left out.",
+        "Smokers-allowed is set to false because the description explicitly negates it ('No Smokers'). Pets-allowed is NOT output at all because the description is silent on pets."
+      ]
+    },
+
+    {
+      "listing_id": 2548,
+      "target": "Rightmove",
+      "listing_type": "Sale",
+      "input": "Three Bedroom | DETACHED | Ample Driveway Parking | Large Rear Garden | ORANGERY | Approx 1478 Sq.Ft | Utility Room | Walking distance to Primary & Secondary Schools | South Sittingbourne | 1930s Build | Very Well Presented\n\n\\rA well-proportioned very well presented family home offering a practical layout and generous living space. The property is conveniently placed for Sittingbourne town centre, which provides a range of shops, schools and amenities, along with excellent transport connections by road and rail.\n\nThe ground floor features a welcoming hallway leading to a bright living room at the front, with a bay window that enhances the natural light. A separate dining room creates a sociable space for mealtimes and entertaining, while the kitchen opens into a spacious organgery at the rear. This room adds a versatile dimension to the home, ideal for relaxing or enjoying views of the garden throughout the year. A utility room and downstairs cloakroom complete the ground floor.\n\nUpstairs, the home offers three bedrooms. The main bedroom, with its bay window, provides a light and airy retreat, while the second bedroom is another comfortable double. The third bedroom is a flexible space that could serve as a child's room, study or home office. A modern family bathroom completes the accommodation.\n\nThe rear garden is large and provides plenty of opportunity for outdoor dining, play and gardening.\n\nThe property combines space and functionality, making it an attractive option for families or anyone seeking a well-balanced home in a convenient location close to Sittingbourne's amenities and transport links.",
+      "output": {
+        "property_type": "Detached",
+        "beds": 3,
+        "baths": 1,
+        "living_rooms": 2,
+        "total_floor_area_sqm": 137.31,
+        "total_floors": 2,
+        "floors_occupied": [0, 1],
+        "build_year_min": 1930,
+        "build_year_max": 1939,
+        "amenities_interior": ["Utility room", "Conservatory"],
+        "amenities_outdoor": ["Private Garden"],
+        "parking": ["Private driveway"],
+        "school_mentions": ["Primary & Secondary Schools"],
+        "flags": {},
+        "evidence": {
+          "property_type": "DETACHED",
+          "beds": "Three Bedroom",
+          "baths": "A modern family bathroom completes the accommodation",
+          "living_rooms": "bright living room ... separate dining room",
+          "total_floor_area_sqm": "Approx 1478 Sq.Ft",
+          "floors_occupied.0": "The ground floor features a welcoming hallway",
+          "floors_occupied.1": "Upstairs, the home offers three bedrooms",
+          "build_year_min": "1930s Build",
+          "build_year_max": "1930s Build",
+          "amenities_interior.Utility room": "Utility Room",
+          "amenities_interior.Conservatory": "ORANGERY",
+          "amenities_outdoor.Private Garden": "Large Rear Garden",
+          "parking.Private driveway": "Ample Driveway Parking",
+          "school_mentions": "Walking distance to Primary & Secondary Schools"
+        }
+      },
+      "labelling_notes": [
+        "1478 sq.ft -> 1478 * 0.092903 = 137.31 sqm. Always round to 2 decimals.",
+        "'orangery' is the closest hit for the 'Conservatory' amenity; the schema vocabulary collapses both under one title.",
+        "Separate living and dining rooms -> living_rooms = 2.",
+        "A family-home on ground + first floor -> total_floors = 2 and floors_occupied = [0, 1]. Do NOT invent a basement even though the schema allows -1.",
+        "No sale-specific fields (tenure, lease length) are mentioned, so the `sale` block is entirely omitted."
+      ]
+    },
+
+    {
+      "listing_id": 2363,
+      "target": "Spareroom",
+      "listing_type": "Room",
+      "input": "We have a bright double room available in our lovely flat from the 24th of May. Rent is \u00a3730 per month, plus bills (approximately \u00a370\u2013\u00a380 per person).\n\nThe room comes fully furnished with a double bed and plenty of storage, and gets great natural light, is a really comfortable room.\n\nThe flat is also fully furnished and includes all the essentials: central heating, dishwasher, washing machine, dryer, gas hob, shared bathroom, and shared lounge. There's also a great sized patio, perfect for summer BBQs and chilling outside.\n\nYou'll be living with three Kiwi guys who are all super friendly, easygoing, and respectful. Everyone works full-time, and while we're a social house - occasional movie nights, BBQs, or a few drinks - we also really value personal space and downtime. It's a really nice, chill, tidy, and welcoming home.\n\nThe flat is on a quiet street just off Clapham Road, with great neighbours and an ideal location. It's a short walk to both Stockwell and Clapham North stations (Victoria and Northern lines), making it really easy to get around London.\n\nIf you're interested for a viewing let me know",
+      "output": {
+        "property_type": "Flat",
+        "amenities_interior": ["Gas heating"],
+        "amenities_outdoor": ["Patio/Terrace"],
+        "amenities_appliances": ["Dishwasher", "Washing machine", "Dryer"],
+        "rent": {
+          "furnish_type": "Furnished",
+          "bills_included": "None",
+          "bills_amount": 75
+        },
+        "room": {
+          "room_type": "Double",
+          "current_number_of_flatmates": 3,
+          "current_gender": "male",
+          "current_occupation": "full-time professionals",
+          "shared_living_room": true
+        },
+        "flags": {},
+        "nearby_mentions": [
+          {"name": "Stockwell station"},
+          {"name": "Clapham North station"}
+        ],
+        "evidence": {
+          "property_type": "our lovely flat",
+          "amenities_interior.Gas heating": "central heating ... gas hob",
+          "amenities_outdoor.Patio/Terrace": "great sized patio",
+          "amenities_appliances.Dishwasher": "dishwasher",
+          "amenities_appliances.Washing machine": "washing machine",
+          "amenities_appliances.Dryer": "dryer",
+          "rent.furnish_type": "fully furnished",
+          "rent.bills_included": "plus bills (approximately \u00a370\u2013\u00a380 per person)",
+          "rent.bills_amount": "approximately \u00a370\u2013\u00a380 per person",
+          "room.room_type": "bright double room",
+          "room.current_number_of_flatmates": "living with three Kiwi guys",
+          "room.current_gender": "three Kiwi guys",
+          "room.current_occupation": "Everyone works full-time",
+          "room.shared_living_room": "shared lounge",
+          "nearby_mentions.Stockwell station": "short walk to both Stockwell and Clapham North stations",
+          "nearby_mentions.Clapham North station": "short walk to both Stockwell and Clapham North stations"
+        }
+      },
+      "labelling_notes": [
+        "'central heating ... gas hob' -> Gas heating is defensible; pure electric boilers would not get this tag.",
+        "bills_amount is the midpoint of the stated \u00a370\u2013\u00a380 range. Document this convention explicitly in the prompt if you want the model to follow it.",
+        "The Spareroom description is ambiguous about the incoming tenant's gender — the `desired_gender` field is therefore omitted.",
+        "'living with three Kiwi guys' -> current_gender = male, current_number_of_flatmates = 3 (not 4; the fourth slot is the advertised room).",
+        "Walk times to Stockwell / Clapham North are not given numerically, so `walk_minutes` is omitted rather than guessed at."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "repo": "standrey/listing-descriptions",
+  "config": "data",
+  "split": "train",
+  "seed": 42,
+  "n_requested": 60,
+  "n_written": 60,
+  "class_histogram": {
+    "Sale": 7,
+    "Room": 18,
+    "Rent": 35
+  },
+  "source_total_rows": 1704
+}

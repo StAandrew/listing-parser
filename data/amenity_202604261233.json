@@ -1,0 +1,156 @@
+{
+"amenity": [
+	{
+		"title" : "Wooden floors"
+	},
+	{
+		"title" : "Underfloor heating"
+	},
+	{
+		"title" : "Gas heating"
+	},
+	{
+		"title" : "Double glazing"
+	},
+	{
+		"title" : "Kitchen island"
+	},
+	{
+		"title" : "Open plan living area"
+	},
+	{
+		"title" : "Stairs"
+	},
+	{
+		"title" : "Floor-to-ceiling windows"
+	},
+	{
+		"title" : "High ceilings"
+	},
+	{
+		"title" : "Walk-in wardrobe"
+	},
+	{
+		"title" : "Loft\/Attic"
+	},
+	{
+		"title" : "Utility room"
+	},
+	{
+		"title" : "En-suite"
+	},
+	{
+		"title" : "Bathtub"
+	},
+	{
+		"title" : "Walk-in shower"
+	},
+	{
+		"title" : "Bidet"
+	},
+	{
+		"title" : "Fireplace"
+	},
+	{
+		"title" : "Conservatory"
+	},
+	{
+		"title" : "A\/C"
+	},
+	{
+		"title" : "Smart home"
+	},
+	{
+		"title" : "Security alarm"
+	},
+	{
+		"title" : "Balcony"
+	},
+	{
+		"title" : "Patio\/Terrace"
+	},
+	{
+		"title" : "Private Garden"
+	},
+	{
+		"title" : "Communal Garden"
+	},
+	{
+		"title" : "Private roof terrace"
+	},
+	{
+		"title" : "Shed"
+	},
+	{
+		"title" : "Penthouse"
+	},
+	{
+		"title" : "Basement"
+	},
+	{
+		"title" : "Bike storage"
+	},
+	{
+		"title" : "EV charger"
+	},
+	{
+		"title" : "Tennis court"
+	},
+	{
+		"title" : "Gated development"
+	},
+	{
+		"title" : "Sauna"
+	},
+	{
+		"title" : "Spa"
+	},
+	{
+		"title" : "Swimming pool"
+	},
+	{
+		"title" : "Gym\/Fitness centre"
+	},
+	{
+		"title" : "Concierge\/Doorman"
+	},
+	{
+		"title" : "Cinema room"
+	},
+	{
+		"title" : "Residents' lounge"
+	},
+	{
+		"title" : "Co-working space"
+	},
+	{
+		"title" : "Package room"
+	},
+	{
+		"title" : "Communal laundry"
+	},
+	{
+		"title" : "Rooftop garden"
+	},
+	{
+		"title" : "Children's play area"
+	},
+	{
+		"title" : "Elevator"
+	},
+	{
+		"title" : "Washing machine"
+	},
+	{
+		"title" : "Dryer"
+	},
+	{
+		"title" : "Dishwasher"
+	},
+	{
+		"title" : "Fridge\/Freezer"
+	},
+	{
+		"title" : "Microwave"
+	}
+]}
