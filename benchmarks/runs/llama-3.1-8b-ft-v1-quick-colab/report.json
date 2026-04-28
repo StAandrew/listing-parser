@@ -1,0 +1,709 @@
+{
+  "n": 60,
+  "n_parse_ok": 60,
+  "n_schema_ok": 60,
+  "parse_rate": 1.0,
+  "schema_rate": 1.0,
+  "macro_accuracy": 0.9647342995169081,
+  "evidence_grounding_rate": 0.9956958393113343,
+  "by_field": {
+    "property_type": {
+      "n": 60.0,
+      "coverage": 1.0,
+      "precision": 0.95,
+      "recall": 0.95,
+      "f1": 0.9500000000000001,
+      "accuracy": 0.95,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "beds": {
+      "n": 60.0,
+      "coverage": 0.7,
+      "precision": 0.9767441860465116,
+      "recall": 1.0,
+      "f1": 0.988235294117647,
+      "accuracy": 0.9833333333333333,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "baths": {
+      "n": 60.0,
+      "coverage": 0.5833333333333334,
+      "precision": 0.9722222222222222,
+      "recall": 1.0,
+      "f1": 0.9859154929577464,
+      "accuracy": 0.9833333333333333,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "living_rooms": {
+      "n": 60.0,
+      "coverage": 0.55,
+      "precision": 0.96875,
+      "recall": 0.9393939393939394,
+      "f1": 0.9538461538461539,
+      "accuracy": 0.9666666666666667,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "total_floor_area_sqm": {
+      "n": 60.0,
+      "coverage": 0.06666666666666667,
+      "precision": 0.8,
+      "recall": 1.0,
+      "f1": 0.888888888888889,
+      "accuracy": 0.9833333333333333,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "total_floors": {
+      "n": 60.0,
+      "coverage": 0.08333333333333333,
+      "precision": 0.75,
+      "recall": 0.6,
+      "f1": 0.6666666666666665,
+      "accuracy": 0.95,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "floors_occupied": {
+      "n": 60.0,
+      "coverage": 0.3333333333333333,
+      "precision": 1.0,
+      "recall": 0.85,
+      "f1": 0.9189189189189189,
+      "accuracy": 0.95,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "build_year_min": {
+      "n": 60.0,
+      "coverage": 0.016666666666666666,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "accuracy": 1.0,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "build_year_max": {
+      "n": 60.0,
+      "coverage": 0.016666666666666666,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "accuracy": 1.0,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "window_orientation": {
+      "n": 60.0,
+      "coverage": 0.03333333333333333,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "accuracy": 1.0,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "amenities_interior": {
+      "n": 60.0,
+      "coverage": 0.75,
+      "precision": 0.5777777777777777,
+      "recall": 0.5777777777777777,
+      "f1": 0.5777777777777777,
+      "accuracy": 0.6333333333333333,
+      "vocab_violations": 1.0,
+      "case_mismatches": 0.0,
+      "set_f1": 0.7313401875901876
+    },
+    "amenities_outdoor": {
+      "n": 60.0,
+      "coverage": 0.6666666666666666,
+      "precision": 0.8947368421052632,
+      "recall": 0.85,
+      "f1": 0.8717948717948718,
+      "accuracy": 0.8833333333333333,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0,
+      "set_f1": 0.8715447154471545
+    },
+    "amenities_facilities": {
+      "n": 60.0,
+      "coverage": 0.1,
+      "precision": 0.4,
+      "recall": 0.3333333333333333,
+      "f1": 0.3636363636363636,
+      "accuracy": 0.9333333333333333,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0,
+      "set_f1": 0.7632275132275131
+    },
+    "amenities_appliances": {
+      "n": 60.0,
+      "coverage": 0.26666666666666666,
+      "precision": 0.7333333333333333,
+      "recall": 0.6875,
+      "f1": 0.7096774193548386,
+      "accuracy": 0.8833333333333333,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0,
+      "set_f1": 0.6587301587301587
+    },
+    "parking": {
+      "n": 60.0,
+      "coverage": 0.4166666666666667,
+      "precision": 0.875,
+      "recall": 0.84,
+      "f1": 0.8571428571428572,
+      "accuracy": 0.9166666666666666,
+      "vocab_violations": 1.0,
+      "case_mismatches": 0.0,
+      "set_f1": 0.8076923076923077
+    },
+    "rent.furnish_type": {
+      "n": 60.0,
+      "coverage": 0.5,
+      "precision": 0.9310344827586207,
+      "recall": 0.9,
+      "f1": 0.9152542372881356,
+      "accuracy": 0.9333333333333333,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "rent.let_type": {
+      "n": 60.0,
+      "coverage": 0.13333333333333333,
+      "precision": 0.7777777777777778,
+      "recall": 0.875,
+      "f1": 0.823529411764706,
+      "accuracy": 0.9666666666666667,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "rent.tenancy_min_months": {
+      "n": 60.0,
+      "coverage": 0.06666666666666667,
+      "precision": 1.0,
+      "recall": 0.75,
+      "f1": 0.8571428571428571,
+      "accuracy": 0.9833333333333333,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "rent.tenancy_max_months": {
+      "n": 60.0,
+      "coverage": 0.016666666666666666,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "accuracy": 1.0,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "rent.deposit_weeks": {
+      "n": 60.0,
+      "coverage": 0.08333333333333333,
+      "precision": 0.75,
+      "recall": 0.6,
+      "f1": 0.6666666666666665,
+      "accuracy": 0.95,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "rent.deposit_amount": {
+      "n": 60.0,
+      "coverage": 0.16666666666666666,
+      "precision": 0.7777777777777778,
+      "recall": 0.7,
+      "f1": 0.7368421052631577,
+      "accuracy": 0.9166666666666666,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "rent.bills_included": {
+      "n": 60.0,
+      "coverage": 0.38333333333333336,
+      "precision": 0.8695652173913043,
+      "recall": 0.8695652173913043,
+      "f1": 0.8695652173913043,
+      "accuracy": 0.9,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "rent.bills_amount": {
+      "n": 60.0,
+      "coverage": 0.016666666666666666,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "accuracy": 1.0,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "rent.pets_allowed": {
+      "n": 60.0,
+      "coverage": 0.1,
+      "precision": 1.0,
+      "recall": 0.8333333333333334,
+      "f1": 0.9090909090909091,
+      "accuracy": 0.9833333333333333,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "rent.smokers_allowed": {
+      "n": 60.0,
+      "coverage": 0.08333333333333333,
+      "precision": 1.0,
+      "recall": 0.6,
+      "f1": 0.7499999999999999,
+      "accuracy": 0.9666666666666667,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "rent.wifi_included": {
+      "n": 60.0,
+      "coverage": 0.15,
+      "precision": 0.9,
+      "recall": 1.0,
+      "f1": 0.9473684210526316,
+      "accuracy": 0.9833333333333333,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "rent.rental_support_accepted": {
+      "n": 60.0,
+      "coverage": 0.05,
+      "precision": 1.0,
+      "recall": 0.3333333333333333,
+      "f1": 0.5,
+      "accuracy": 0.9666666666666667,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "rent.student_friendly": {
+      "n": 60.0,
+      "coverage": 0.13333333333333333,
+      "precision": 0.875,
+      "recall": 0.875,
+      "f1": 0.875,
+      "accuracy": 0.9666666666666667,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "rent.dps": {
+      "n": 60.0,
+      "coverage": 0.03333333333333333,
+      "precision": 1.0,
+      "recall": 0.5,
+      "f1": 0.6666666666666666,
+      "accuracy": 0.9833333333333333,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "sale.tenure_type": {
+      "n": 60.0,
+      "coverage": 0.05,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "accuracy": 1.0,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "sale.length_of_lease_years": {
+      "n": 60.0,
+      "coverage": 0.016666666666666666,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "accuracy": 1.0,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "sale.ground_rent_amount": {
+      "n": 60.0,
+      "coverage": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "accuracy": 1.0,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "sale.service_charge_amount": {
+      "n": 60.0,
+      "coverage": 0.03333333333333333,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "accuracy": 1.0,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "sale.is_shared_ownership": {
+      "n": 60.0,
+      "coverage": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "accuracy": 1.0,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "sale.purchase_scheme": {
+      "n": 60.0,
+      "coverage": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "accuracy": 1.0,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "room.room_type": {
+      "n": 60.0,
+      "coverage": 0.25,
+      "precision": 0.9333333333333333,
+      "recall": 0.9333333333333333,
+      "f1": 0.9333333333333333,
+      "accuracy": 0.9833333333333333,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "room.is_ensuite": {
+      "n": 60.0,
+      "coverage": 0.08333333333333333,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "accuracy": 1.0,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "room.listing_for_number_of_rooms": {
+      "n": 60.0,
+      "coverage": 0.06666666666666667,
+      "precision": 0.5,
+      "recall": 0.75,
+      "f1": 0.6,
+      "accuracy": 0.9333333333333333,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "room.current_number_of_flatmates": {
+      "n": 60.0,
+      "coverage": 0.08333333333333333,
+      "precision": 0.75,
+      "recall": 0.6,
+      "f1": 0.6666666666666665,
+      "accuracy": 0.9666666666666667,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "room.current_gender": {
+      "n": 60.0,
+      "coverage": 0.06666666666666667,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "accuracy": 1.0,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "room.current_age_min": {
+      "n": 60.0,
+      "coverage": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "accuracy": 1.0,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "room.current_age_max": {
+      "n": 60.0,
+      "coverage": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "accuracy": 1.0,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "room.current_occupation": {
+      "n": 60.0,
+      "coverage": 0.016666666666666666,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "accuracy": 1.0,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "room.current_pets": {
+      "n": 60.0,
+      "coverage": 0.016666666666666666,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "accuracy": 1.0,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "room.current_smokers": {
+      "n": 60.0,
+      "coverage": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "accuracy": 1.0,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "room.desired_age_min": {
+      "n": 60.0,
+      "coverage": 0.016666666666666666,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "accuracy": 0.9833333333333333,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "room.desired_age_max": {
+      "n": 60.0,
+      "coverage": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "accuracy": 1.0,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "room.desired_occupation": {
+      "n": 60.0,
+      "coverage": 0.06666666666666667,
+      "precision": 0.5,
+      "recall": 0.5,
+      "f1": 0.5,
+      "accuracy": 0.9333333333333333,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "room.desired_gender": {
+      "n": 60.0,
+      "coverage": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "accuracy": 0.9833333333333333,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "room.couples_allowed": {
+      "n": 60.0,
+      "coverage": 0.06666666666666667,
+      "precision": 0.75,
+      "recall": 0.75,
+      "f1": 0.75,
+      "accuracy": 0.9666666666666667,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "room.family_friendly": {
+      "n": 60.0,
+      "coverage": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "accuracy": 1.0,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "room.vegetarian_household": {
+      "n": 60.0,
+      "coverage": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "accuracy": 1.0,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "room.lgbt_household": {
+      "n": 60.0,
+      "coverage": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "accuracy": 1.0,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "room.shared_living_room": {
+      "n": 60.0,
+      "coverage": 0.16666666666666666,
+      "precision": 0.75,
+      "recall": 0.6,
+      "f1": 0.6666666666666665,
+      "accuracy": 0.9,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "flags.is_chain_free": {
+      "n": 60.0,
+      "coverage": 0.05,
+      "precision": 0.6666666666666666,
+      "recall": 0.6666666666666666,
+      "f1": 0.6666666666666666,
+      "accuracy": 0.9666666666666667,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "flags.is_build_to_rent": {
+      "n": 60.0,
+      "coverage": 0.03333333333333333,
+      "precision": 0.5,
+      "recall": 0.5,
+      "f1": 0.5,
+      "accuracy": 0.9666666666666667,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "flags.is_cash_only": {
+      "n": 60.0,
+      "coverage": 0.016666666666666666,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "accuracy": 0.9833333333333333,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "flags.is_hmo": {
+      "n": 60.0,
+      "coverage": 0.03333333333333333,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "accuracy": 1.0,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "flags.is_auction": {
+      "n": 60.0,
+      "coverage": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "accuracy": 1.0,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "flags.has_planning_permission": {
+      "n": 60.0,
+      "coverage": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "accuracy": 1.0,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "flags.is_tenanted": {
+      "n": 60.0,
+      "coverage": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "accuracy": 1.0,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "flags.has_commercial_tenant": {
+      "n": 60.0,
+      "coverage": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "accuracy": 1.0,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "flags.is_new_build": {
+      "n": 60.0,
+      "coverage": 0.03333333333333333,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "accuracy": 0.9666666666666667,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "flags.is_warehouse_conversion": {
+      "n": 60.0,
+      "coverage": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "accuracy": 1.0,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "flags.is_graded_building": {
+      "n": 60.0,
+      "coverage": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "accuracy": 1.0,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "flags.wheelchair_access": {
+      "n": 60.0,
+      "coverage": 0.016666666666666666,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "accuracy": 0.9833333333333333,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0
+    },
+    "nearby_mentions": {
+      "n": 60.0,
+      "coverage": 0.7,
+      "precision": 0.5853658536585366,
+      "recall": 0.5714285714285714,
+      "f1": 0.5783132530120483,
+      "accuracy": 0.6666666666666666,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0,
+      "set_f1": 0.773714416896235
+    },
+    "commute_claims": {
+      "n": 60.0,
+      "coverage": 0.11666666666666667,
+      "precision": 0.5555555555555556,
+      "recall": 0.7142857142857143,
+      "f1": 0.6250000000000001,
+      "accuracy": 0.9333333333333333,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0,
+      "set_f1": 0.6888888888888889
+    },
+    "school_mentions": {
+      "n": 60.0,
+      "coverage": 0.15,
+      "precision": 0.7,
+      "recall": 0.7777777777777778,
+      "f1": 0.7368421052631577,
+      "accuracy": 0.9333333333333333,
+      "vocab_violations": 0.0,
+      "case_mismatches": 0.0,
+      "set_f1": 0.7727272727272727
+    }
+  }
+}
