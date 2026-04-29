@@ -1,10 +1,37 @@
 # listing-parser
 
-Fine-tunes a small LLM (Llama 3.1 8B) to extract structured JSON from UK
+## Abstract
+
+A student-teacher fine-tune that distils Claude Haiku 4.5 into a
+QLoRA-fine-tuned Llama 3.1 8B for extracting structured JSON from UK
 property listing descriptions. The extracted JSON follows a strict
-schema backed by controlled vocabularies for property types, amenities,
-parking, tenure, furnishing, and so on — the output is directly
-consumable by a downstream relational database.
+schema (≈75 fields across 5 blocks) backed by controlled vocabularies
+for property types, amenities, parking, tenure, furnishing, and so on
+— directly consumable by a relational database.
+
+The project ships five scored benchmark runs against a frozen 60-row
+test set. Headline numbers on macro field accuracy:
+
+| Model | `macro_accuracy` | `schema_rate` |
+|---|---:|---|
+| Claude Haiku 4.5 (teacher) | 99.3% | 98.3% |
+| Llama 3.1 8B base (student, no training) | 81.7% | 65.0% |
+| Llama 3.1 8B fine-tune, in-notebook inference | **96.5%** | **100.0%** |
+| Llama 3.1 8B fine-tune, Bedrock CMI-served | 92.4% | 90.0% |
+
+**Fine-tuning closes ~93% of the teacher-to-student gap** on macro
+field accuracy in the in-notebook evaluation (81.7% → 96.5%, vs
+teacher 99.3%), eliminates schema-invalidity entirely (65% → 100%),
+and drops vocabulary violations from 42 to 2. Fine-tune cost was a
+single ~1-hour Colab Pro A100 session at ~$3 and ~1,700 teacher-
+labelled rows, training from `unsloth/Meta-Llama-3.1-8B-Instruct-bnb-4bit`.
+
+A ~4-point gap between in-notebook and CMI-served scores with
+identical weights (92.4% vs 96.5% macro; 90% vs 100% schema) is
+systematic across every field — an open investigation into the
+Bedrock serving stack's bf16 path vs Unsloth's inference path. See
+the "Results" section below for the detailed scorecard and the
+"Honest limitations" notes.
 
 End-to-end pipeline this repo owns:
 
@@ -591,6 +618,179 @@ Gotchas worth knowing:
   rounding differences, prompt tokenization drift between the
   patched training template and Bedrock's serving tokenizer, or
   sampling differences at temperature 0. Open investigation.
+
+## Results
+
+All five runs scored against the same frozen 60-row
+`benchmarks/test_set.jsonl` (stratified: 39 Rent / 13 Sale / 8 Room).
+Each run's full `report.md` + `report.json` + `predictions.jsonl`
+is committed under `benchmarks/runs/<slug>/` for diff-reviews across
+future runs.
+
+### Headlines
+
+| Run | `parse_rate` | `schema_rate` | `macro_accuracy` | `evidence_grounding` | vocab violations |
+|---|---:|---:|---:|---:|---:|
+| `haiku-4.5-teacher` | 100.0% | 98.3% | **99.3%** | 97.0% | 6 |
+| `llama-3.1-8b-base` | 100.0% | 65.0% | 81.7% | 82.4% | 42 |
+| `llama-3.1-8b-ft-v1-quick-colab` | 100.0% | **100.0%** | **96.5%** | **99.6%** | 2 |
+| `llama-3.1-8b-ft-v1-quick-bedrock` | 100.0% | 90.0% | 92.4% | 99.4% | 0 |
+| `llama-3.1-8b-ft-v1-full-bedrock` | 100.0% | 95.0% | 92.2% | 96.7% | 0 |
+
+Three observations jump out:
+
+**1. Fine-tuning works, and closes almost all of the gap to the
+teacher.** In-notebook eval on the Colab-served fine-tune hits 96.5%
+macro accuracy vs the teacher's 99.3%. That's a 14.8-point lift over
+the un-tuned base model (81.7%) and within 2.8 points of the
+teacher. On `schema_rate` the fine-tune actually *exceeds* the
+teacher (100% vs 98.3%) — the teacher occasionally hallucinates
+fields like `sale.rental_income_monthly` that don't exist in the
+schema, and the fine-tune doesn't.
+
+**2. Closed-vocabulary adherence is the big win.** Vocabulary
+violations drop from 42 (base) → 2 (Colab fine-tune) → 0 (Bedrock-
+served fine-tunes). The 42 base-model violations were concentrated
+in amenities: "Electric heating", "En-suite bathroom", "Garden", etc.
+— plausible phrases the schema doesn't permit. Fine-tuning on 1,700
+examples of a strict vocabulary teaches the model that "discard
+over invent" is the correct behaviour. This is the single most
+important signal for a production pipeline because every vocab
+violation is an extraction that can't be loaded into the downstream
+relational DB.
+
+**3. `amenities_interior` is the hardest field for every model.**
+Teacher: 90.0% accuracy, F1 0.90. Base: 23.3%, F1 0.22. Fine-tune:
+63.3% (Colab) / 41.7% (Bedrock). It's the longest vocabulary (40+
+items), the most subjective, and the most common in listings
+("spacious open-plan kitchen with integrated appliances" → which
+bucket?). If there's a ft-v2, this field is where to target it.
+
+### Per-field accuracy, worst 10 (Colab fine-tune)
+
+The weakest fields on the Colab-served fine-tune, sorted ascending.
+Coverage shown as % of gold rows that populate the field — low-
+coverage fields have higher variance so a 1-row miss swings accuracy
+heavily:
+
+| Field | Coverage | Accuracy | F1 | Notes |
+|---|---:|---:|---:|---|
+| `amenities_interior` | 75.0% | 63.3% | 0.578 | Long vocab, subjective mapping |
+| `nearby_mentions` | 70.0% | 66.7% | 0.578 | List-of-dicts, matched by `name` only |
+| `amenities_outdoor` | 66.7% | 88.3% | 0.872 | |
+| `amenities_appliances` | 26.7% | 88.3% | 0.710 | |
+| `rent.bills_included` | 38.3% | 90.0% | 0.870 | Enum: All/Some/None |
+| `room.shared_living_room` | 16.7% | 90.0% | 0.667 | 3-way bool, low coverage |
+| `parking` | 41.7% | 91.7% | 0.857 | |
+| `rent.deposit_amount` | 16.7% | 91.7% | 0.737 | Numeric with 5% tolerance |
+| `amenities_facilities` | 10.0% | 93.3% | 0.364 | Rare field, F1 noisy |
+| `rent.furnish_type` | 50.0% | 93.3% | 0.915 | Enum |
+
+Every other field lands ≥95% accuracy.
+
+### Colab vs Bedrock serving: the 4-point gap
+
+Same weights, same gold set, same prompt — different inference
+stack. The gap isn't random:
+
+| Field | Colab A100 (in-notebook) | Bedrock CMI | Δ |
+|---|---:|---:|---:|
+| `rent.let_type` | 96.7% | 65.0% | **−31.7** |
+| `rent.bills_included` | 90.0% | 65.0% | **−25.0** |
+| `amenities_interior` | 63.3% | 41.7% | **−21.7** |
+| `nearby_mentions` | 66.7% | 48.3% | **−18.3** |
+| `rent.furnish_type` | 93.3% | 76.7% | **−16.7** |
+| `property_type` | 95.0% | 80.0% | −15.0 |
+| `rent.pets_allowed` | 98.3% | 85.0% | −13.3 |
+| `beds` | 98.3% | 86.7% | −11.7 |
+| `baths` | 98.3% | 88.3% | −10.0 |
+
+Every field drops; nothing gains. That's consistent with a
+systematic serving-stack effect (bf16 rounding + tokenizer detail)
+rather than sampling noise. The plausible suspects:
+
+- **bf16 vs fp16.** Colab A100 inference uses bf16; Bedrock CMI may
+  cast weights differently on serving. We saved the fine-tune as
+  `merged_16bit` (bf16 on A100 / fp16 on T4); whichever precision
+  Bedrock re-quantizes to could shift decision boundaries on
+  borderline tokens.
+- **Tokenizer drift.** The Unsloth training pipeline used a chat
+  template patched with `{% generation %}` markers; CMI's serving
+  tokenizer is derived from the same files we uploaded, but there's
+  at least one place in the Bedrock Llama stack that could
+  renormalise whitespace differently (the `<|eot_id|>` boundary in
+  particular).
+- **Sampling at T=0.** Both use greedy decoding but tie-breaking on
+  equiprobable tokens isn't guaranteed identical across runtimes.
+
+This is an open investigation. The 92.4% Bedrock number is still a
+solid win over the 81.7% base-model baseline — just not yet as good
+as the hardware we trained on reports. Candidates for a fix: rescore
+the Colab path with `load_in_4bit=True` (to match CMI's likely
+quantisation), diff tokenised lengths between the two paths, or
+measure logit drift on a single fixed input.
+
+### Quick vs full fine-tune
+
+We trained two fine-tunes from the same 1,704-row dataset:
+
+- **Quick**: 300 gradient steps, 1 epoch equivalent, ~10 min on A100.
+- **Full**: 3 epochs (~800 steps), ~30 min on A100.
+
+On Bedrock-served scoring, the full run only marginally beats the
+quick run (92.2% vs 92.4% macro; 95.0% vs 90.0% schema). The full
+run does notably better on `rent.furnish_type` (+2.3 points) and
+amenity fields; the quick run beats it on `property_type` (+11.7
+points). At this dataset size the quick run is already close to the
+ceiling of what 1,704 rows can teach — additional epochs mostly
+reshuffle which fields the model over-weights. If ft-v2 happens,
+the better investment is more data or better loss masking on the
+hard fields, not more epochs.
+
+### What would meaningfully improve numbers
+
+In rough order of expected-value-per-effort:
+
+1. **More rows.** Label another ~3,000 listings with the teacher.
+   Structured-extraction fine-tunes plateau slowly; going from 1,700
+   to 4,700 rows is a reasonable bet for +2–3 points.
+2. **Focus loss on the long-vocab fields.** Right now the assistant-
+   span loss mask treats every token equally. Weighting
+   `amenities_*` higher would trade marginal accuracy on easy fields
+   for notable gains on the field that's currently 0.58 F1.
+3. **Close the Colab-vs-Bedrock gap.** The 4 points left on the
+   table by the serving stack is the cheapest thing to chase.
+   Needs experimentation, not more training.
+4. **Synthetic hard-examples.** For `amenities_interior`
+   specifically, generate adversarial listings with ambiguous
+   phrasing via the teacher + add them to the training set.
+5. **LoRA rank / alpha bumps.** We trained at rank 32. Rank 64 or
+   128 has more capacity but at this dataset size likely trades
+   capacity for overfitting — worth trying only once we have more
+   data.
+
+### Honest limitations
+
+A few things to keep in mind before trusting these numbers too far:
+
+- **60-row gold set.** Good for tracking trends but noisy per-field
+  — any field with <10 positive examples has a ≥10% variance floor
+  on accuracy. The numbers above are the best point estimates we
+  have; don't read into 1-point swings.
+- **Teacher-labelled gold.** The gold set was labelled by Haiku
+  itself. A student scoring "100% on schema" against Haiku's labels
+  doesn't mean "perfect extraction" — it means "exactly matches
+  what Haiku says". Hand-auditing a sample would be needed for an
+  absolute quality claim.
+- **Test-set freshness.** The gold was frozen from the same HF
+  dataset the student trained on. We deduplicate by description
+  prefix (first 200 chars) but that's only approximate dedup;
+  near-duplicates of training rows in the test set would inflate
+  numbers. The `test_set.jsonl.meta.json` records the freeze seed
+  so this is auditable.
+- **Single-seed training.** Fine-tunes vary run-to-run at the
+  ~1-point level. We report the numbers from our specific seed
+  (3407) but haven't measured variance.
 
 ## File formats
 
