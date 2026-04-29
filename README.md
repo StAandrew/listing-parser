@@ -220,7 +220,7 @@ Example invocations:
 
 ```bash
 # Teacher baseline — Haiku 4.5, eu-west-2, uses prompt caching.
-AWS_PROFILE=XXXXXXX lp-benchmark run \
+AWS_PROFILE=<profile> lp-benchmark run \
     --runner bedrock-haiku \
     --gold benchmarks/test_set.jsonl \
     --out-dir benchmarks/runs/haiku-4.5-teacher \
@@ -228,7 +228,7 @@ AWS_PROFILE=XXXXXXX lp-benchmark run \
 
 # Student base-model baseline — Llama 3.1 8B Instruct on Bedrock,
 # us-west-2, greedy decoding, no prompt caching.
-AWS_PROFILE=XXXXXXX lp-benchmark run \
+AWS_PROFILE=<profile> lp-benchmark run \
     --runner bedrock-llama \
     --gold benchmarks/test_set.jsonl \
     --out-dir benchmarks/runs/llama-3.1-8b-base \
@@ -236,7 +236,7 @@ AWS_PROFILE=XXXXXXX lp-benchmark run \
 
 # Fine-tuned student via Bedrock CMI, eu-central-1. The ARN comes
 # from the model import step — see "Deploying to Bedrock" below.
-AWS_PROFILE=XXXXXXX lp-benchmark run \
+AWS_PROFILE=<profile> lp-benchmark run \
     --runner bedrock-ft \
     --model-id "arn:aws:bedrock:eu-central-1:ACCOUNT:imported-model/ABC123" \
     --name-slug "llama-3.1-8b-ft-v1-quick-bedrock" \
@@ -520,15 +520,15 @@ export ACCOUNT_ID=$(AWS_PROFILE=XXXXXXX aws sts get-caller-identity \
 #     {"Effect":"Allow","Action":["s3:GetObject"],"Resource":"arn:aws:s3:::BUCKET/*"},
 #     {"Effect":"Allow","Action":["s3:ListBucket"],"Resource":"arn:aws:s3:::BUCKET"}
 #   ]}
-AWS_PROFILE=XXXXXXX aws iam create-role \
+AWS_PROFILE=<profile> aws iam create-role \
     --role-name BedrockCMIListingParser \
     --assume-role-policy-document file:///tmp/cmi-trust.json
-AWS_PROFILE=XXXXXXX aws iam put-role-policy \
+AWS_PROFILE=<profile> aws iam put-role-policy \
     --role-name BedrockCMIListingParser --policy-name CMIReadS3 \
     --policy-document file:///tmp/cmi-s3.json
 
 # 4. Launch the import. Takes 30-90 min.
-AWS_PROFILE=XXXXXXX aws bedrock create-model-import-job \
+AWS_PROFILE=<profile> aws bedrock create-model-import-job \
     --job-name "listing-parser-ft-v1-$(date +%s)" \
     --imported-model-name "listing-parser-ft-v1" \
     --role-arn "arn:aws:iam::${ACCOUNT_ID}:role/BedrockCMIListingParser" \
@@ -536,12 +536,12 @@ AWS_PROFILE=XXXXXXX aws bedrock create-model-import-job \
     --region ${REGION}
 
 # 5. Poll until `Completed`.
-AWS_PROFILE=XXXXXXX aws bedrock get-model-import-job \
+AWS_PROFILE=<profile> aws bedrock get-model-import-job \
     --job-identifier "listing-parser-ft-v1-..." \
     --region ${REGION} --query 'status'
 
 # 6. Grab the ARN. This is what you pass to bedrock-ft.
-ARN=$(AWS_PROFILE=XXXXXXX aws bedrock list-imported-models \
+ARN=$(AWS_PROFILE=<profile> aws bedrock list-imported-models \
     --region ${REGION} \
     --query 'modelSummaries[?modelName==`listing-parser-ft-v1`].modelArn' \
     --output text)
@@ -550,14 +550,14 @@ ARN=$(AWS_PROFILE=XXXXXXX aws bedrock list-imported-models \
 cat > /tmp/invoke-smoke.json <<EOF
 {"prompt":"<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\nok<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n","max_gen_len":10,"temperature":0.0}
 EOF
-AWS_PROFILE=XXXXXXX aws bedrock-runtime invoke-model \
+AWS_PROFILE=<profile> aws bedrock-runtime invoke-model \
     --model-id "$ARN" --region ${REGION} \
     --body file:///tmp/invoke-smoke.json \
     --cli-binary-format raw-in-base64-out /tmp/smoke-out.json
 cat /tmp/smoke-out.json
 
 # 8. Score the CMI-served model.
-AWS_PROFILE=XXXXXXX lp-benchmark run \
+AWS_PROFILE=<profile> lp-benchmark run \
     --runner bedrock-ft \
     --model-id "$ARN" \
     --name-slug "llama-3.1-8b-ft-v1-bedrock" \
