@@ -281,3 +281,129 @@ def test_sync_converse_omits_cache_point_when_disabled() -> None:
     # Plain block only; no cachePoint directive. Bedrock's Llama
     # integration raises ValidationException otherwise.
     assert system_blocks == [{"text": "sys prompt"}]
+
+
+# ---------------------------------------------------------------------------
+# bedrock_invoke — the CMI protocol.
+#
+# InvokeModel takes a pre-rendered Llama chat template as a single
+# string in the `prompt` field. Getting the template markers wrong is
+# silent-failure territory: the model responds, but the fine-tune
+# was trained on one format and inferred on another, and quality
+# degrades with no error message. Pin the exact bytes.
+# ---------------------------------------------------------------------------
+
+
+def test_render_llama31_prompt_matches_expected_markers() -> None:
+    from listing_parser.labelling.bedrock_invoke import _render_llama31_prompt
+
+    out = _render_llama31_prompt(
+        "SYS BLOCK",
+        ("hello",),
+    )
+    # Byte-exact assertions — these tokens are what Bedrock's Llama
+    # stack parses. One stray space and it either errors out or (worse)
+    # produces degraded output we won't notice until scoring.
+    expected = (
+        "<|begin_of_text|>"
+        "<|start_header_id|>system<|end_header_id|>\n\n"
+        "SYS BLOCK"
+        "<|eot_id|>"
+        "<|start_header_id|>user<|end_header_id|>\n\n"
+        "hello"
+        "<|eot_id|>"
+        "<|start_header_id|>assistant<|end_header_id|>\n\n"
+    )
+    assert out == expected
+
+
+def test_render_llama31_prompt_multi_turn_correction_path() -> None:
+    """The correction-prompt retry path sends two user turns in a row
+    (no intervening assistant). The renderer must handle that cleanly.
+    """
+    from listing_parser.labelling.bedrock_invoke import _render_llama31_prompt
+
+    out = _render_llama31_prompt("SYS", ("first user turn", "second user turn"))
+    assert out.count("<|start_header_id|>user<|end_header_id|>") == 2
+    assert out.count("<|start_header_id|>assistant<|end_header_id|>") == 1
+    assert out.endswith("<|start_header_id|>assistant<|end_header_id|>\n\n")
+
+
+def test_sync_invoke_builds_correct_payload_and_parses_response() -> None:
+    from listing_parser.labelling.bedrock_invoke import _sync_invoke
+
+    captured: dict = {}
+
+    class _FakeStreamingBody:
+        def __init__(self, data: bytes):
+            self._data = data
+        def read(self):
+            return self._data
+
+    class _FakeClient:
+        def invoke_model(self, **kwargs):
+            captured.update(kwargs)
+            return {
+                "body": _FakeStreamingBody(
+                    b'{"generation":"ok","prompt_token_count":16,'
+                    b'"generation_token_count":2,"stop_reason":"stop"}'
+                )
+            }
+
+    import json as _json
+    resp = _sync_invoke(
+        _FakeClient(),
+        "arn:aws:bedrock:eu-central-1:123:imported-model/abc",
+        "SYS",
+        ("u",),
+        max_tokens=10,
+        temperature=0.0,
+    )
+    # Request shape: no `system`/`messages` — CMI takes a rendered
+    # prompt string in `body.prompt`.
+    body = _json.loads(captured["body"])
+    assert "prompt" in body
+    assert "<|begin_of_text|>" in body["prompt"]
+    assert body["max_gen_len"] == 10
+    assert body["temperature"] == 0.0
+    # `messages` and `system` MUST NOT appear — their presence would
+    # be a Converse-API leak that Bedrock rejects on imported models.
+    assert "messages" not in body
+    assert "system" not in body
+
+    # Response parsed into the same TeacherResponse shape as Converse,
+    # so the runner layer doesn't need to branch on response type.
+    assert resp.text == "ok"
+    assert resp.input_tokens == 16
+    assert resp.output_tokens == 2
+    # CMI doesn't support prompt caching; these are always 0.
+    assert resp.cache_read_tokens == 0
+    assert resp.cache_write_tokens == 0
+
+
+def test_sync_invoke_raises_throttled_on_cold_start() -> None:
+    """ModelNotReadyException is a CMI cold-start signal, not a real
+    failure. We convert it to _Throttled so the backoff loop retries.
+    """
+    import pytest
+    from botocore.exceptions import ClientError
+
+    from listing_parser.labelling.bedrock_invoke import _sync_invoke
+    from listing_parser.labelling.teacher import _Throttled
+
+    class _FakeClient:
+        def invoke_model(self, **kwargs):
+            raise ClientError(
+                {"Error": {"Code": "ModelNotReadyException", "Message": "warming"}},
+                "InvokeModel",
+            )
+
+    with pytest.raises(_Throttled):
+        _sync_invoke(
+            _FakeClient(),
+            "arn:test",
+            "SYS",
+            ("u",),
+            max_tokens=10,
+            temperature=0.0,
+        )

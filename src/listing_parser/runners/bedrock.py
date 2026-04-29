@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from listing_parser.labelling.bedrock_invoke import call_imported
 from listing_parser.labelling.teacher import (
     DEFAULT_MODEL_ID,
     DEFAULT_REGION,
@@ -68,6 +69,15 @@ class _BedrockRunnerBase:
     _DEFAULT_REGION: str = DEFAULT_REGION
     _DEFAULT_TEMPERATURE: float = 0.0
     _DEFAULT_USE_CACHE: bool = False
+    # Dispatch flag: Converse for foundation models (Anthropic, Meta
+    # on-demand); InvokeModel for CMI-imported custom models. CMI
+    # imports flip this in the subclass. The two protocols are wire-
+    # level incompatible — Converse takes structured messages + an
+    # optional cachePoint, InvokeModel takes a pre-rendered prompt
+    # string and the provider's native response format — so this
+    # isn't just a convenience flag, it selects between two mutually-
+    # exclusive code paths.
+    _USES_INVOKE_MODEL: bool = False
 
     def __init__(
         self,
@@ -131,18 +141,35 @@ class _BedrockRunnerBase:
             # Hand the current turns (first attempt or correction retry)
             # to the teacher client. Usage counters are captured per
             # call and merged into the last ParseAttempt we return.
-            resp = await call_teacher(
-                system_prompt,
-                turns,
-                semaphore=semaphore,
-                profile=self._profile,
-                region=self._region,
-                model_id=self._model_id,
-                max_tokens=self._max_tokens,
-                temperature=self._temperature,
-                on_throttle=self._on_throttle,
-                use_cache=self._use_cache,
-            )
+            # Dispatch on protocol: Converse (default) vs InvokeModel
+            # (CMI-imported models). The two low-level functions return
+            # the same `TeacherResponse` shape, so downstream parsing
+            # and retry logic is protocol-agnostic.
+            if self._USES_INVOKE_MODEL:
+                resp = await call_imported(
+                    system_prompt,
+                    turns,
+                    semaphore=semaphore,
+                    profile=self._profile,
+                    region=self._region,
+                    model_id=self._model_id,
+                    max_tokens=self._max_tokens,
+                    temperature=self._temperature,
+                    on_throttle=self._on_throttle,
+                )
+            else:
+                resp = await call_teacher(
+                    system_prompt,
+                    turns,
+                    semaphore=semaphore,
+                    profile=self._profile,
+                    region=self._region,
+                    model_id=self._model_id,
+                    max_tokens=self._max_tokens,
+                    temperature=self._temperature,
+                    on_throttle=self._on_throttle,
+                    use_cache=self._use_cache,
+                )
             return ParseAttempt(
                 raw=resp.text,
                 pred=parse_output_json(resp.text),
@@ -237,3 +264,52 @@ class BedrockLlamaRunner(_BedrockRunnerBase):
     _DEFAULT_REGION = "us-west-2"
     _DEFAULT_TEMPERATURE = 0.0
     _DEFAULT_USE_CACHE = False
+
+
+class BedrockFineTuneRunner(_BedrockRunnerBase):
+    """Runner for a Bedrock-CMI-hosted fine-tune of Llama 3.1 8B.
+
+    CMI imports produce an account-specific `imported-model/<id>` ARN
+    rather than a shared, human-readable model id. Two consequences:
+
+      * `_DEFAULT_MODEL_ID = None` — the ARN MUST be passed explicitly.
+        Defaulting it would silently bind the runner to whichever ARN
+        was current when this module was written, which would go stale
+        the next time you reimport.
+      * `_DEFAULT_NAME` is the slug of the underlying fine-tune (e.g.
+        "llama-3.1-8b-ft-v1-full"); the on-disk report directory
+        takes this slug.
+
+    Other defaults deliberately mirror `BedrockLlamaRunner`:
+      * region = `eu-central-1` — where the CMI import lives. Frankfurt
+        rather than London because CMI isn't offered in eu-west-2 at
+        time of writing. Override with `--region` if that changes.
+      * temperature = 0.0 — greedy decode; the fine-tune was trained
+        at temp 0 during SFT, so matching at inference is honest.
+      * use_cache = False — CMI-served Llama rejects the `cachePoint`
+        directive, same as vanilla Bedrock Llama.
+
+    Operational gotchas that bite on CMI (not on foundation models):
+      * Cold start: 60-120s on the first call after >5 min idle. The
+        runner's existing throttle backoff won't hide this — the first
+        scoring row in a run just takes a long time.
+      * On-demand quota: default is low (~1 req/s). At `--concurrency
+        2`+ you'll throttle constantly. Start with `--concurrency 1`
+        unless you've got a quota increase from AWS service quotas.
+    """
+
+    _DEFAULT_NAME = "llama-3.1-8b-ft"
+    _DEFAULT_MODEL_ID = None  # must be passed explicitly
+    _DEFAULT_REGION = "eu-central-1"
+    _DEFAULT_TEMPERATURE = 0.0
+    _DEFAULT_USE_CACHE = False
+    _USES_INVOKE_MODEL = True  # CMI rejects Converse; InvokeModel only
+
+    def __init__(self, *, model_id: str | None = None, **kwargs) -> None:
+        if not model_id:
+            raise ValueError(
+                "BedrockFineTuneRunner requires --model-id "
+                "(the CMI imported-model ARN, e.g. "
+                "arn:aws:bedrock:eu-central-1:ACCOUNT:imported-model/abc)"
+            )
+        super().__init__(model_id=model_id, **kwargs)

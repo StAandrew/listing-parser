@@ -442,3 +442,51 @@ def test_bedrock_runner_constructor_overrides_respected() -> None:
     assert r._temperature == 0.5
     assert r._use_cache is True
     assert r._max_parse_retries == 3
+
+
+def test_bedrock_ft_requires_model_id() -> None:
+    """The fine-tune ARN is account-specific — no sensible default. We
+    refuse to construct without one rather than silently binding to an
+    outdated ARN.
+    """
+    import pytest
+
+    from listing_parser.runners.bedrock import BedrockFineTuneRunner
+    with pytest.raises(ValueError, match="requires --model-id"):
+        BedrockFineTuneRunner()
+
+
+def test_bedrock_ft_defaults_eu_central_1_no_caching() -> None:
+    from listing_parser.runners.bedrock import BedrockFineTuneRunner
+
+    # A dummy ARN that looks real enough; the runner doesn't validate
+    # ARN format (Bedrock does that on first Converse call).
+    r = BedrockFineTuneRunner(
+        model_id="arn:aws:bedrock:eu-central-1:123:imported-model/abc",
+    )
+    # Frankfurt, not London — CMI isn't offered in eu-west-2 at time
+    # of writing, which is the reason this runner exists as a
+    # separate class rather than a BedrockLlamaRunner config.
+    assert r._region == "eu-central-1"
+    # Same as BedrockLlamaRunner: Meta models reject cachePoint.
+    assert r._use_cache is False
+    assert r._temperature == 0.0
+    assert r.name == "llama-3.1-8b-ft"
+    # The key CMI-specific flag: must dispatch to InvokeModel, not
+    # Converse. Getting this wrong breaks every call to a CMI model
+    # with "This action doesn't support the model that you provided".
+    assert r._USES_INVOKE_MODEL is True
+
+
+def test_bedrock_haiku_and_llama_use_converse() -> None:
+    """Inverse regression test: foundation-model runners must stay on
+    Converse. If _USES_INVOKE_MODEL accidentally propagates, Haiku's
+    prompt caching silently breaks.
+    """
+    from listing_parser.runners.bedrock import (
+        BedrockHaikuRunner,
+        BedrockLlamaRunner,
+    )
+
+    assert BedrockHaikuRunner()._USES_INVOKE_MODEL is False
+    assert BedrockLlamaRunner()._USES_INVOKE_MODEL is False

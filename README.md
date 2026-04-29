@@ -26,24 +26,44 @@ End-to-end pipeline this repo owns:
 
 ## Status
 
-| Stage | State |
+| Stage | Artefact |
 |---|---|
-| Prompt + schema design | ✅ `prompt.md`, `examples.json` |
-| Teacher labelling pipeline | ✅ `src/listing_parser/labelling/` |
-| Frozen test set + scorer | ✅ this repo |
-| Teacher baseline on gold | ✅ `benchmarks/runs/haiku-4.5-teacher/report.md` |
-| Base-model baseline (Llama 3.1 8B via Bedrock) | ✅ `benchmarks/runs/llama-3.1-8b-base/report.md` |
-| Fine-tune (Unsloth, Llama 3.1 8B QLoRA on RunPod) | ☐ next |
-| Bedrock Custom Model Import | ☐ |
+| Prompt + schema design | `prompt.md`, `examples.json` (mirrored into `src/listing_parser/_assets/`) |
+| Teacher labelling pipeline | `src/listing_parser/labelling/` |
+| Frozen test set + scorer | `benchmarks/test_set.jsonl`, `src/listing_parser/benchmarks/` |
+| Teacher baseline | `benchmarks/runs/haiku-4.5-teacher/report.md` |
+| Student base-model baseline | `benchmarks/runs/llama-3.1-8b-base/report.md` |
+| Fine-tuning (Unsloth QLoRA on Colab) | `Listing_Parser_Fine_Tune_Unsloth.ipynb` |
+| Student fine-tune served via Bedrock CMI | `benchmarks/runs/llama-3.1-8b-ft-v1-*-bedrock/report.md` |
+
+Current scorecard across all committed runs:
+
+| Run | `parse_rate` | `schema_rate` | `macro_accuracy` | `evidence_grounding_rate` |
+|---|---:|---:|---:|---:|
+| `haiku-4.5-teacher` | 100.0% | 98.3% | 99.3% | 97.0% |
+| `llama-3.1-8b-base` | 100.0% | 65.0% | 81.7% | 82.4% |
+| `llama-3.1-8b-ft-v1-quick-colab` (in-notebook eval) | 100.0% | 100.0% | 96.5% | 99.6% |
+| `llama-3.1-8b-ft-v1-quick-bedrock` (CMI-served) | 100.0% | 90.0% | 92.4% | 99.4% |
+| `llama-3.1-8b-ft-v1-full-bedrock` (CMI-served) | 100.0% | 95.0% | 92.2% | 96.7% |
+
+Regenerate any of these with `lp-benchmark run` + `lp-benchmark score` —
+see "Typical workflows" below.
 
 ## Repo layout
 
 ```
 listing-parser/
-├── prompt.md                          System prompt + JSON schema (source of truth)
+├── Listing_Parser_Fine_Tune_Unsloth.ipynb   Colab notebook that produces
+│                                            the merged fine-tune (Unsloth
+│                                            QLoRA on A100). See "Fine-tuning"
+│                                            section below.
+├── prompt.md                          System prompt + JSON schema (source of truth;
+│                                      mirrored into src/listing_parser/_assets/ so
+│                                      the pip-installed package works without the
+│                                      repo checkout, e.g. from a Colab notebook)
 ├── examples.json                      Worked examples used as few-shot + docs
 ├── data/                              Listings in (JSON) and labelled rows out
-│   ├── listing_202604241550.csv          ~11.6k listing descriptions (single column)
+│   ├── listing_<stamp>.csv               Listing descriptions (single column)
 │   ├── listing_<stamp>.json              Listings pre-tagged with listing_type — input
 │   │                                     to the labeller
 │   ├── amenity_<stamp>.json              Amenity vocabulary snapshot
@@ -57,19 +77,25 @@ listing-parser/
 │   ├── test_set.jsonl.meta.json          Repro metadata: seed, histograms, source
 │   └── runs/                             One subdir per scored run
 │       └── <run-name>/
-│           ├── predictions.jsonl            Produced by a future runner
-│           ├── report.md                    Human-readable scorecard
-│           └── report.json                  Raw numbers for diffing runs
+│           ├── predictions.jsonl            Produced by a runner (committed)
+│           ├── report.md                    Human-readable scorecard (committed)
+│           ├── report.json                  Raw numbers for diffing runs (committed)
+│           ├── _row_ids.txt                 Resume sidecar (gitignored)
+│           └── _log.jsonl                   Per-row diagnostics (gitignored)
 ├── src/listing_parser/
+│   ├── _assets/                          prompt.md + examples.json, packaged
+│   │                                     with the wheel so pip-installed
+│   │                                     consumers don't need the repo.
 │   ├── schema.py                         Enums + Pydantic model, mirrors prompt.md
 │   ├── cleaning.py                       Pure repair rules + parse helpers; single
 │   │                                     source of truth for "what valid labels look
 │   │                                     like" — used by the labeller AND the migration
 │   ├── prompting.py                      Assemble system + user messages; stitches
 │   │                                     prompt.md, schema.py, and examples.json
-│   ├── labelling/                        Teacher-calling pipeline
+│   ├── labelling/                        Bedrock wire protocols + teacher pipeline
 │   │   ├── sources.py                       Read data/listing_*.json -> ListingInput
-│   │   ├── teacher.py                       Bedrock Converse client, async + caching
+│   │   ├── teacher.py                       Converse API client (cachePoint support)
+│   │   ├── bedrock_invoke.py                InvokeModel client for CMI-imported models
 │   │   ├── pipeline.py                      Per-row loop: prompt -> teacher -> clean
 │   │   │                                    -> validate -> retry -> emit
 │   │   └── sinks.py                         Append-only writer + index regeneration
@@ -77,16 +103,18 @@ listing-parser/
 │   │   ├── base.py                          Runner Protocol + RunnerResult
 │   │   ├── _output.py                       Shared parse-and-retry (one retry on
 │   │   │                                    bad JSON; no schema retry)
-│   │   ├── bedrock.py                       BedrockHaikuRunner (reuses teacher.py)
+│   │   ├── bedrock.py                       BedrockHaikuRunner (teacher, Converse)
+│   │   │                                    BedrockLlamaRunner (base, Converse)
+│   │   │                                    BedrockFineTuneRunner (CMI, InvokeModel)
 │   │   └── pipeline.py                      Gold JSONL -> predictions.jsonl driver
 │   │                                         with resume + per-run sidecar/log
 │   └── benchmarks/
 │       ├── test_set.py                     Builds benchmarks/test_set.jsonl from HF
 │       ├── scorer.py                       Per-field metrics (pure, no I/O)
 │       └── cli.py                          `lp-benchmark` entry point (run/score/smoke)
-├── tests/                             pytest suite, 62 cases covering cleaning,
-│                                      prompting, scorer edge cases, and test-set
-│                                      fence-stripping
+├── tests/                             pytest suite covering cleaning, prompting,
+│                                      scorer edge cases, runner dispatch, and the
+│                                      Llama-3.1 chat template bytes.
 ├── scripts/                           One-off CLIs (not on the runtime path)
 │   ├── label_listings.py                 Label a listing_*.json batch via Haiku
 │   ├── push_labels_to_hf.py              Mirror data/labelled/_index.json to HF
@@ -109,13 +137,28 @@ pip install -e ".[dev]"
 Smoke-test the install:
 
 ```bash
-pytest                     # 74 tests, <1s
-lp-benchmark smoke --gold benchmarks/test_set.jsonl   # gold-vs-gold
+pytest -q                                              # full test suite
+lp-benchmark smoke --gold benchmarks/test_set.jsonl    # scorer gold-vs-gold
 ```
 
-`lp-benchmark smoke` is a self-check: it scores the gold test set
-against itself, so `parse_rate`, `schema_rate`, and `macro_accuracy`
-should all be 1.0. Anything less is a bug in the scorer, not the data.
+`lp-benchmark smoke` scores the gold test set against itself, so
+`parse_rate`, `schema_rate`, and `macro_accuracy` should all be 1.0.
+Anything less is a bug in the scorer, not the data.
+
+### Credentials you'll need
+
+Actual workflows (labelling, benchmarking, fine-tuning) need external
+services. The install alone needs nothing; credentials only come into
+play when you run one of the workflow commands below.
+
+| Service | What for | Where to set |
+|---|---|---|
+| AWS (Bedrock + S3) | Teacher Haiku runs, base-Llama runs, CMI imports, fine-tune deployment | `AWS_PROFILE` env var or `~/.aws/credentials` |
+| HF Hub | Push/pull labelled dataset, push fine-tuned weights | `HF_TOKEN` in `.env` (repo root) |
+| W&B | Training-metric logging during fine-tune | `WANDB_API_KEY` (Colab secret or env var) |
+
+A `.env` file is loaded by the CLI tools that need it (`label_listings.py`,
+`push_labels_to_hf.py`, `lp-benchmark run`); the file is gitignored.
 
 ## Typical workflows
 
@@ -151,25 +194,7 @@ Point a runner at the frozen gold set and let it write
 re-calls the model for every gold row; the scorer reads the output
 offline.
 
-```bash
-# Teacher baseline — Haiku 4.5, eu-west-2, uses prompt caching.
-AWS_PROFILE=XXXXXXX lp-benchmark run \
-    --runner bedrock-haiku \
-    --gold benchmarks/test_set.jsonl \
-    --out-dir benchmarks/runs/haiku-4.5-teacher \
-    --concurrency 4
-
-# Student base-model baseline — Llama 3.1 8B Instruct on Bedrock,
-# us-west-2, greedy decoding, no prompt caching. Matches what the
-# fine-tune will be served as via Bedrock CMI.
-AWS_PROFILE=XXXXXXX lp-benchmark run \
-    --runner bedrock-llama \
-    --gold benchmarks/test_set.jsonl \
-    --out-dir benchmarks/runs/llama-3.1-8b-base \
-    --concurrency 4
-```
-
-Two runners ship today:
+Three runners ship today:
 
 - `bedrock-haiku` — Claude Haiku 4.5 (the teacher). Defaults: region
   `eu-west-2`, model `global.anthropic.claude-haiku-4-5-20251001-v1:0`,
@@ -182,6 +207,43 @@ Two runners ship today:
   directive). This is the baseline the fine-tune has to beat — same
   weights family, same serving precision, no laptop-quantization
   confounds.
+- `bedrock-ft` — a Custom Model Import (CMI) of a fine-tuned Llama
+  3.1 8B. Requires `--model-id <arn>` because CMI ARNs are account-
+  specific. Defaults: region `eu-central-1` (CMI isn't available in
+  `eu-west-2` at time of writing), temperature 0.0. Uses the
+  InvokeModel API rather than Converse — CMI imports don't support
+  Converse, so this runner dispatches to `labelling/bedrock_invoke.py`
+  internally. See the "Fine-tuning" + "Deploying to Bedrock" sections
+  below for how to produce the ARN.
+
+Example invocations:
+
+```bash
+# Teacher baseline — Haiku 4.5, eu-west-2, uses prompt caching.
+AWS_PROFILE=XXXXXXX lp-benchmark run \
+    --runner bedrock-haiku \
+    --gold benchmarks/test_set.jsonl \
+    --out-dir benchmarks/runs/haiku-4.5-teacher \
+    --concurrency 4
+
+# Student base-model baseline — Llama 3.1 8B Instruct on Bedrock,
+# us-west-2, greedy decoding, no prompt caching.
+AWS_PROFILE=XXXXXXX lp-benchmark run \
+    --runner bedrock-llama \
+    --gold benchmarks/test_set.jsonl \
+    --out-dir benchmarks/runs/llama-3.1-8b-base \
+    --concurrency 4
+
+# Fine-tuned student via Bedrock CMI, eu-central-1. The ARN comes
+# from the model import step — see "Deploying to Bedrock" below.
+AWS_PROFILE=XXXXXXX lp-benchmark run \
+    --runner bedrock-ft \
+    --model-id "arn:aws:bedrock:eu-central-1:ACCOUNT:imported-model/ABC123" \
+    --name-slug "llama-3.1-8b-ft-v1-quick-bedrock" \
+    --gold benchmarks/test_set.jsonl \
+    --out-dir benchmarks/runs/llama-3.1-8b-ft-v1-quick-bedrock \
+    --concurrency 1   # CMI default quota is ~1 req/s
+```
 
 Why not Ollama + `hf.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF:Q4_K_M`
 as the baseline? Q4_K_M routinely drops 1–3 points on structured-
@@ -207,14 +269,20 @@ same command; rows already present in the sidecar are skipped. Pass
 
 Runner options:
 
-- `--runner {bedrock-haiku,bedrock-llama}` — picks the provider.
-- `--region` / `--model-id` override the runner's defaults (useful
-  for pinning an inference profile like
-  `us.meta.llama3-1-8b-instruct-v1:0` when an ON_DEMAND quota is
-  saturated).
+- `--runner {bedrock-haiku,bedrock-llama,bedrock-ft}` — picks the provider.
+- `--model-id` — required for `bedrock-ft` (the CMI ARN); override the
+  default for `bedrock-haiku`/`bedrock-llama` e.g. to pin an inference
+  profile like `us.meta.llama3-1-8b-instruct-v1:0` when an ON_DEMAND
+  quota is saturated.
+- `--region` overrides the runner's default. CMI imports live in
+  whichever region you ran the import job in (we default to
+  `eu-central-1`).
 - `--max-parse-retries` controls how many times a JSON-parse failure
   gets a correction prompt retry. Default 1; set 0 to measure the
   model's first-pass parse rate honestly.
+- `--concurrency` — cap on in-flight requests. Start low for CMI
+  (default 1) and for Llama base-model (ON_DEMAND quotas throttle
+  above 4); Haiku tolerates 4–8 comfortably thanks to prompt caching.
 - **No schema-validation retry.** The scorer's `schema_rate` metric
   catches that — retrying would hide regressions that a production
   inference stack would still have to live with.
@@ -334,6 +402,195 @@ be **dropped** (that would silently change which rows
 would be **content-repaired** (the gold file embeds its own parsed
 copy, so past reports stay valid — the HF source just drifts from the
 gold until you refresh it on purpose).
+
+### 7. Fine-tune the student model (Colab + Unsloth)
+
+The fine-tune itself runs in `Listing_Parser_Fine_Tune_Unsloth.ipynb`,
+a Colab notebook you open via the "Open in Colab" badge at the top.
+Training happens on rented A100 GPU time; the notebook produces a
+merged bf16 safetensors model that uploads to Hugging Face under
+`standrey/listing-parser-llama31-8b-ft-v1[-full]`.
+
+Why a notebook rather than a script in this repo:
+
+- Unsloth needs a CUDA-enabled GPU and a specific torch/CUDA/triton
+  stack; running it from a Mac dev environment isn't viable.
+- Colab is the cheapest A100 you can rent by the hour (~$10/mo for
+  Pro; this fine-tune takes ~25 min on A100, so one fine-tune run
+  costs a few dollars).
+- The weights output (~16GB) doesn't belong in git. HF is the natural
+  store.
+
+What the notebook does, cell-by-cell:
+
+1. **Install** Unsloth + TRL + transformers pinned against each
+   other, plus `listing-parser` from this GitHub repo so training
+   uses the exact same `build_system_prompt` / `build_user_message`
+   the teacher did. Getting the prompt to diff between labelling and
+   training would silently invalidate everything.
+2. **Load** `unsloth/Meta-Llama-3.1-8B-Instruct-bnb-4bit` at 4-bit
+   with `max_seq_length=8192`. Token-length diagnostics showed p95
+   ~6,300 for our data; 8192 gives comfortable headroom.
+3. **Patch the Llama-3.1 chat template** with `{% generation %}`
+   markers. This is load-bearing: neither Unsloth's bundled template
+   nor Meta's own template has these markers, and without them
+   `tokenizer.apply_chat_template(..., return_assistant_tokens_mask
+   =True)` returns an all-zeros mask. The loss-masking collator
+   silently computes loss on nothing, training becomes a no-op, and
+   the only signal is an eerily-low stuck loss. Cell 14 includes a
+   byte-equality check against `NousResearch/Meta-Llama-3.1-8B-Instruct`
+   so this patch can't silently drift from the reference tokenizer.
+4. **Attach LoRA adapters** at rank 32, α 32, all 7 projection
+   matrices. Narrow structured-output tasks benefit from more
+   adapter capacity than chat-style fine-tunes.
+5. **Load + tokenize the HF dataset**, apply the patched chat
+   template, and assert that `assistant_masks` has non-zero entries.
+   The assertion fails fast if the template patch didn't land — it's
+   the single cheapest guard against the "loss stuck at 0" failure
+   mode we hit during bringup.
+6. **`AssistantMaskCollator`** (cell 15) — a hand-rolled collator
+   that pads sequences, builds `labels` from the assistant mask (set
+   to -100 outside the assistant span), and hands the batch to TRL's
+   `SFTTrainer`. We do this ourselves rather than relying on TRL's
+   `assistant_only_loss=True` because Unsloth's patched trainer
+   rejects it on pre-tokenized datasets.
+7. **Train** in two phases: `PHASE="quick"` (300 steps, ~10 min on
+   A100) to confirm the pipeline works, then `PHASE="full"`
+   (3 epochs, ~25 min on A100). Loss starts around 1.8–2.2 and
+   descends to 0.2–0.4. W&B logging is wired in (cell 18).
+8. **Save merged bf16 weights** locally + push to HF. The merged
+   model is what Bedrock CMI ingests — Bedrock doesn't accept LoRA
+   adapters, it wants a standalone HF-format directory.
+9. **In-notebook eval** — download the committed gold set, run 60
+   predictions through the merged model, write a `predictions.jsonl`,
+   download it. This gives you an immediate scorecard without waiting
+   for Bedrock CMI (which takes 30–90 min to import).
+
+The notebook's `predictions.jsonl` lands at
+`benchmarks/runs/llama-3.1-8b-ft-v1-*-colab/predictions.jsonl` when
+you score it locally with `lp-benchmark score`.
+
+Cost and time expectations for one full fine-tune run:
+
+| Component | Time | Cost |
+|---|---|---|
+| Colab Pro A100 (fine-tune + eval) | ~1 hour | ~$2–4 |
+| HF bandwidth for merged weights push | ~5 min | free |
+
+### 8. Deploy a fine-tune to Bedrock Custom Model Import
+
+The fine-tune needs to be served to be useful. Bedrock CMI is the
+cheapest option for bursty / occasional-inference workloads (scale-
+to-zero, billed per 5-minute window of activity). For sustained
+traffic, consider SageMaker; the break-even is roughly 5 hours/day
+of active invocation. Economics live in
+`src/listing_parser/runners/CLAUDE.md`.
+
+Steps, assuming the fine-tune notebook has already pushed weights
+to `standrey/listing-parser-llama31-8b-ft-v1-*`:
+
+```bash
+# 1. Configure region / bucket / IDs once per fine-tune version.
+export REGION=eu-central-1      # Frankfurt — CMI isn't in London (eu-west-2) yet
+export BUCKET=listing-parser-cmi
+export ACCOUNT_ID=$(AWS_PROFILE=XXXXXXX aws sts get-caller-identity \
+    --query Account --output text)
+
+# 2. Download weights from HF, upload to S3. Easiest path is from
+#    the Colab notebook itself — see the "S3 upload" cells in
+#    Listing_Parser_Fine_Tune_Unsloth.ipynb. From a local machine,
+#    you can also use `huggingface-cli download` + `aws s3 sync`.
+
+# 3. Create the IAM role Bedrock CMI assumes (one-time).
+#
+# Trust policy (cmi-trust.json) — allow bedrock service to assume the
+# role, scoped to your account + the model-import-job ARN pattern:
+#   {"Version":"2012-10-17","Statement":[{
+#     "Effect":"Allow",
+#     "Principal":{"Service":"bedrock.amazonaws.com"},
+#     "Action":"sts:AssumeRole",
+#     "Condition":{
+#       "StringEquals":{"aws:SourceAccount":"ACCOUNT_ID"},
+#       "ArnLike":{"aws:SourceArn":"arn:aws:bedrock:REGION:ACCOUNT_ID:model-import-job/*"}
+#     }
+#   }]}
+#
+# S3 read policy (cmi-s3.json) — GetObject on bucket/*, ListBucket on bucket:
+#   {"Version":"2012-10-17","Statement":[
+#     {"Effect":"Allow","Action":["s3:GetObject"],"Resource":"arn:aws:s3:::BUCKET/*"},
+#     {"Effect":"Allow","Action":["s3:ListBucket"],"Resource":"arn:aws:s3:::BUCKET"}
+#   ]}
+AWS_PROFILE=XXXXXXX aws iam create-role \
+    --role-name BedrockCMIListingParser \
+    --assume-role-policy-document file:///tmp/cmi-trust.json
+AWS_PROFILE=XXXXXXX aws iam put-role-policy \
+    --role-name BedrockCMIListingParser --policy-name CMIReadS3 \
+    --policy-document file:///tmp/cmi-s3.json
+
+# 4. Launch the import. Takes 30-90 min.
+AWS_PROFILE=XXXXXXX aws bedrock create-model-import-job \
+    --job-name "listing-parser-ft-v1-$(date +%s)" \
+    --imported-model-name "listing-parser-ft-v1" \
+    --role-arn "arn:aws:iam::${ACCOUNT_ID}:role/BedrockCMIListingParser" \
+    --model-data-source "s3DataSource={s3Uri=s3://${BUCKET}/llama31-8b-ft-v1/}" \
+    --region ${REGION}
+
+# 5. Poll until `Completed`.
+AWS_PROFILE=XXXXXXX aws bedrock get-model-import-job \
+    --job-identifier "listing-parser-ft-v1-..." \
+    --region ${REGION} --query 'status'
+
+# 6. Grab the ARN. This is what you pass to bedrock-ft.
+ARN=$(AWS_PROFILE=XXXXXXX aws bedrock list-imported-models \
+    --region ${REGION} \
+    --query 'modelSummaries[?modelName==`listing-parser-ft-v1`].modelArn' \
+    --output text)
+
+# 7. Smoke test via InvokeModel (Converse doesn't support CMI).
+cat > /tmp/invoke-smoke.json <<EOF
+{"prompt":"<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\nok<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n","max_gen_len":10,"temperature":0.0}
+EOF
+AWS_PROFILE=XXXXXXX aws bedrock-runtime invoke-model \
+    --model-id "$ARN" --region ${REGION} \
+    --body file:///tmp/invoke-smoke.json \
+    --cli-binary-format raw-in-base64-out /tmp/smoke-out.json
+cat /tmp/smoke-out.json
+
+# 8. Score the CMI-served model.
+AWS_PROFILE=XXXXXXX lp-benchmark run \
+    --runner bedrock-ft \
+    --model-id "$ARN" \
+    --name-slug "llama-3.1-8b-ft-v1-bedrock" \
+    --gold benchmarks/test_set.jsonl \
+    --out-dir benchmarks/runs/llama-3.1-8b-ft-v1-bedrock \
+    --concurrency 1 \
+    --region ${REGION}
+
+lp-benchmark score \
+    --gold benchmarks/test_set.jsonl \
+    --predictions benchmarks/runs/llama-3.1-8b-ft-v1-bedrock/predictions.jsonl \
+    --out-dir benchmarks/runs/llama-3.1-8b-ft-v1-bedrock \
+    --name "llama-3.1-8b-ft-v1 (Bedrock)"
+```
+
+Gotchas worth knowing:
+
+- **Cold start.** The first `InvokeModel` call after >5 min idle
+  takes 60–120s. Our `BedrockFineTuneRunner` treats
+  `ModelNotReadyException` as a retryable throttle, so you'll see
+  backoff retries on the first row of a run — not a failure.
+- **Quota.** CMI's default on-demand quota is ~1 req/s. Starting
+  `--concurrency 2` on a new imported model will immediately trigger
+  sustained throttling. Stay at 1 unless you have a quota increase.
+- **Region.** CMI is NOT available in `eu-west-2` (London) at time
+  of writing. `eu-central-1` (Frankfurt) is the nearest EU region
+  with CMI support.
+- **Colab vs Bedrock inference.** Our scoreboard shows the same
+  weights scoring 96.5% macro in Colab and 92.4% via Bedrock CMI.
+  That 4-point gap isn't explained yet — candidates are bf16
+  rounding differences, prompt tokenization drift between the
+  patched training template and Bedrock's serving tokenizer, or
+  sampling differences at temperature 0. Open investigation.
 
 ## File formats
 
@@ -463,34 +720,44 @@ the comparability of every historical `report.md` in `benchmarks/runs/`.
 ## Testing
 
 ```bash
-pytest -v
+pytest -q
 ```
 
-All 24 tests run in under a second and cover the scorer's edge cases
-explicitly:
+All tests run in under a second. Coverage includes:
 
-- omit-vs-explicit-false for booleans
-- evidence grounding with whitespace/unicode normalisation
-- vocab violations vs case mismatches
-- set-F1 for list fields
-- list-dict matching by identifying field only
-- gold-vs-gold scoring perfectly
-- JSON fence stripping and listing-type inference
+- Scorer edge cases: omit-vs-explicit-false for booleans; evidence
+  grounding with whitespace/unicode normalisation; vocab violations
+  vs case mismatches; set-F1 for list fields; list-dict matching by
+  identifying field only; gold-vs-gold scoring perfectly.
+- Parse-and-retry: JSON-fence stripping, correction-prompt path,
+  max-retry exhaustion, non-retryable runtime errors.
+- Runner registry + dispatch: CLI flags wire correctly to concrete
+  runners; `bedrock-ft` uses `_USES_INVOKE_MODEL=True` (CMI rejects
+  Converse); Haiku/Llama stay on Converse (so prompt caching
+  continues to work on Anthropic models).
+- Wire-level Bedrock shape: Llama-3.1 chat template rendering is
+  byte-identical between training and CMI serving; `ModelNotReadyException`
+  is converted to a retryable throttle.
 
 If you touch `scorer.py` or `schema.py`, add the corresponding test
-before merging.
+before merging. Same rule for any `runners/` or `labelling/` change
+that touches the Bedrock wire protocol.
 
 ## What this repo is **not**
 
 - Not a scraper. Listing descriptions come from an external pipeline;
   this repo only sees the text.
-- Not a training harness. Training happens in an Unsloth notebook /
-  RunPod job; artefacts land back here only as `predictions.jsonl`.
-- Not a deployment. Bedrock Custom Model Import is an external
-  one-off step and lives in the consuming application's infra code.
-- Runners for local student models (Ollama) and the merged fine-tune
-  are not yet implemented — `BedrockHaikuRunner` (teacher) and
-  `BedrockLlamaRunner` (student base model) are the providers wired
-  in today. Adding a new runner is a matter of implementing
-  `listing_parser.runners.base.Runner` (two attributes, one async
-  method) and registering it in the CLI's runner lookup.
+- Not a training harness. Training happens in a Colab notebook
+  (`Listing_Parser_Fine_Tune_Unsloth.ipynb`); the repo holds the
+  notebook but Colab-Pro compute isn't bundled. Training artefacts
+  flow back in via HF + Bedrock CMI.
+- Not a production serving stack. `BedrockFineTuneRunner` exercises
+  a CMI-served fine-tune well enough to score it, but a real product
+  would layer caching, rate limiting, and retry-with-backoff on top
+  of the raw InvokeModel call.
+- Not an Ollama path. We deliberately avoid laptop-quant baselines
+  because Q4_K_M routinely drops 1–3 points on structured-extraction
+  tasks vs the bf16 Bedrock serves, and we'd rather not compare the
+  fine-tune to a confounded baseline. Adding an Ollama runner is
+  straightforward (implement `Runner`, register in CLI) if you want
+  that number anyway.

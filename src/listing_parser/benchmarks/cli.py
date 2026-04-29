@@ -181,9 +181,23 @@ def _build_bedrock_llama(args: argparse.Namespace):
     )
 
 
+def _build_bedrock_ft(args: argparse.Namespace):
+    from listing_parser.runners.bedrock import BedrockFineTuneRunner  # noqa: PLC0415
+
+    return BedrockFineTuneRunner(
+        name=args.name_slug,
+        profile=args.profile,
+        region=args.region,
+        model_id=args.model_id,
+        concurrency=args.concurrency,
+        max_parse_retries=args.max_parse_retries,
+    )
+
+
 _RUNNER_BUILDERS: dict[str, Any] = {
     "bedrock-haiku": _build_bedrock_haiku,
     "bedrock-llama": _build_bedrock_llama,
+    "bedrock-ft": _build_bedrock_ft,
 }
 
 

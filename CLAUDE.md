@@ -7,12 +7,17 @@ contradicts it.
 ## What this project is (one paragraph)
 
 A small Python codebase that fine-tunes Llama 3.1 8B via Unsloth to
-extract structured JSON from UK property listing descriptions. Two
-deliverables land here: (1) the canonical prompt + schema, and (2) the
+extract structured JSON from UK property listing descriptions. Three
+deliverables land here: (1) the canonical prompt + schema, (2) the
 benchmarking infrastructure (frozen test set + scorer + reports) that
-tells us whether training actually helped. The fine-tune itself runs on
-rented GPU time, not in this repo; its inputs (labelled data) live on
-Hugging Face; its outputs (`predictions.jsonl`) are scored here.
+tells us whether training actually helped, and (3) the runner layer
+that calls models on Bedrock — teacher (Haiku, Converse), student
+base (Llama, Converse), and the fine-tuned student (CMI-imported
+Llama, InvokeModel) — and produces `predictions.jsonl` for the
+scorer. The fine-tune itself runs in a Colab notebook
+(`Listing_Parser_Fine_Tune_Unsloth.ipynb`) on rented A100 time;
+inputs (labelled data) and outputs (merged weights) live on Hugging
+Face. The Bedrock CMI deployment is documented in `README.md` §7–8.
 
 ## Priorities in order
 
@@ -80,11 +85,15 @@ Hugging Face; its outputs (`predictions.jsonl`) are scored here.
 
 | Path | Writable by | Notes |
 |---|---|---|
-| `prompt.md` | humans only | Source of truth for the task definition. |
-| `examples.json` | humans only | Worked examples; referenced from the prompt. |
+| `prompt.md` | humans only | Source of truth for the task definition. Mirrored to `src/listing_parser/_assets/prompt.md` for package distribution — keep in sync (they're used interchangeably by `prompting.load_prompt_markdown`). |
+| `examples.json` | humans only | Worked examples; referenced from the prompt. Same asset-mirror as above. |
+| `src/listing_parser/_assets/` | follows root | Mirror of `prompt.md` + `examples.json` so pip-installed consumers (notably the Colab fine-tune notebook) work without a repo checkout. |
 | `src/listing_parser/schema.py` | humans only | Mirrors `prompt.md`; keep in sync. |
-| `src/listing_parser/benchmarks/*.py` | code changes | Pure logic, no state. |
-| `src/listing_parser/runners/*.py` | code changes | Provider-specific; share `base.Runner` + `_output.parse_with_retry`. |
+| `src/listing_parser/benchmarks/*.py` | code changes | Pure logic, no state (except `cli.py` which does I/O through subcommands). |
+| `src/listing_parser/labelling/teacher.py` | code changes | Bedrock **Converse** API client, with cachePoint support for Anthropic models. |
+| `src/listing_parser/labelling/bedrock_invoke.py` | code changes | Bedrock **InvokeModel** API client, with Llama-3.1 chat template rendering for CMI-imported models. Byte-identical to the Unsloth-trained template. |
+| `src/listing_parser/runners/bedrock.py` | code changes | `_BedrockRunnerBase` + three concrete runners. Dispatches between Converse and InvokeModel on a class flag. |
+| `Listing_Parser_Fine_Tune_Unsloth.ipynb` | humans only | Colab fine-tune notebook. Commit with outputs cleared — see "Notebook hygiene" below. |
 | `data/` | external tools | Raw CSV exports of listing descriptions. Read-only from code's perspective. |
 | `benchmarks/test_set.jsonl` | `test_set.py --force` only | Frozen; regenerating invalidates history. |
 | `benchmarks/test_set.jsonl.meta.json` | follows `test_set.jsonl` | Repro metadata. |
@@ -107,32 +116,30 @@ pytest -q
 
 # Freeze the test set (ONCE per labelled-dataset version)
 python -m listing_parser.benchmarks.test_set \
- --repo standrey/listing-descriptions --config data --n 60
+    --repo standrey/listing-descriptions --config data --n 60
 
 # Smoke the scorer (expect 1.0 on parse/schema/macro-accuracy)
 lp-benchmark smoke --gold benchmarks/test_set.jsonl
 
-# Generate predictions for a run
-AWS_PROFILE=XXXXXXX lp-benchmark run \
- --runner bedrock-haiku \
- --gold benchmarks/test_set.jsonl \
- --out-dir benchmarks/runs/<slug> \
- --concurrency 4
-
-# Generate predictions for a run (student base model — Llama 3.1 8B)
-AWS_PROFILE=XXXXXXX lp-benchmark run \
- --runner bedrock-llama \
- --gold benchmarks/test_set.jsonl \
- --out-dir benchmarks/runs/<slug> \
- --concurrency 4
-
-# Score a run
+# Score predictions
 lp-benchmark score \
- --gold benchmarks/test_set.jsonl \
- --predictions benchmarks/runs/<slug>/predictions.jsonl \
- --out-dir benchmarks/runs/<slug> \
- --name "<human-readable run name>"
+    --gold benchmarks/test_set.jsonl \
+    --predictions benchmarks/runs/<slug>/predictions.jsonl \
+    --out-dir benchmarks/runs/<slug> \
+    --name "<human-readable run name>"
+
+# Generate predictions from a runner (pick one):
+#   --runner bedrock-haiku    — teacher model
+#   --runner bedrock-llama    — student base model
+#   --runner bedrock-ft       — CMI-imported fine-tune (needs --model-id ARN)
+AWS_PROFILE=<profile> lp-benchmark run \
+    --runner bedrock-haiku \
+    --gold benchmarks/test_set.jsonl \
+    --out-dir benchmarks/runs/<slug> \
+    --concurrency 4
 ```
+
+Full fine-tune + CMI-deploy workflow is in `README.md` §7–8.
 
 ## Scorer internals (short version)
 
@@ -167,23 +174,84 @@ lp-benchmark score \
    include the new field, which is fine: the scorer treats missing
    gold values as "absent" and won't crash.
 
-## When adding a new runner (future PR)
+## When adding a new runner
 
-- Put it in `src/listing_parser/runners/<provider>.py`.
-- Implement the `Runner` Protocol from `runners/base.py`: one async
-  `predict(description, listing_type) -> RunnerResult`, plus a `name`
-  attribute (used in the report header and log lines).
-- Use `runners._output.parse_with_retry` for fence stripping + one-shot
-  JSON-parse retry. Do NOT retry on schema validity — the scorer's
-  `schema_rate` metric exists to catch that, and retrying hides the
-  regressions a production inference stack would still have to live
-  with.
-- Register the runner in `benchmarks/cli._RUNNER_BUILDERS` so
-  `lp-benchmark run --runner <slug>` picks it up.
-- Runner code owns its own rate limiting / retries / connection pool.
-  The pipeline (`runners/pipeline.py`) takes care of gold loading,
-  resume sidecar, concurrency gating, and disk writes.
-- The scorer should need **zero** changes to support a new runner.
+The runner Protocol lives in `runners/base.py`. Three concrete
+runners ship today (`BedrockHaikuRunner`, `BedrockLlamaRunner`,
+`BedrockFineTuneRunner`), all subclassing `_BedrockRunnerBase` which
+handles the shared semaphore, system-prompt rendering, and dispatch
+between the two Bedrock wire protocols.
+
+To add a new Bedrock-backed runner:
+
+1. Subclass `_BedrockRunnerBase`, override `_DEFAULT_*` class
+   constants. Set `_USES_INVOKE_MODEL = True` if it's a CMI import
+   (CMI rejects Converse); leave False for foundation models.
+2. Register the runner in `benchmarks/cli.py::_RUNNER_BUILDERS`.
+3. Add tests to `tests/test_runners.py` pinning the critical defaults
+   (region, model_id, use_cache, invoke-model flag). `bedrock-ft`'s
+   tests are the cleanest template.
+
+To add a non-Bedrock runner (e.g. Ollama, vLLM):
+
+1. Implement the `Runner` Protocol directly (no base class needed).
+2. Provide your own client / concurrency / retry logic. The shared
+   `_output.parse_with_retry` handles fence stripping + parse-error
+   retry; reuse it.
+3. Register in `_RUNNER_BUILDERS`, add tests.
+
+The scorer should need **zero** changes to support any new runner.
+
+## Bedrock wire protocols
+
+Two `labelling/` modules own the low-level Bedrock protocols:
+
+- `teacher.py`: Converse API. Used by Haiku (with cachePoint) and
+  Llama base (without). Best for foundation models that accept
+  structured `messages`/`system` blocks.
+- `bedrock_invoke.py`: InvokeModel API. Used by CMI-imported custom
+  models, which Converse rejects with "This action doesn't support
+  the model that you provided". Renders the Llama-3.1 chat template
+  as a single `prompt` string; matches the Unsloth training
+  template byte-for-byte.
+
+Both return the same `TeacherResponse` dataclass so the runner layer
+can dispatch on a single flag without shape conversion.
+
+If you add a third protocol (e.g. Anthropic's direct Messages API),
+put it in `labelling/` alongside these two and teach
+`_BedrockRunnerBase.predict` to dispatch to it.
+
+## Notebook hygiene
+
+`Listing_Parser_Fine_Tune_Unsloth.ipynb` is version-controlled, but
+saving from Colab reintroduces two kinds of cruft that make diffs
+unreadable:
+
+1. `metadata.widgets['application/vnd.jupyter.widget-state+json']`
+   — Colab adds this; GitHub's renderer crashes on it, showing the
+   notebook as "Invalid". The widget state has no semantic value.
+2. Cell outputs — images, training-loss tables, download prompts
+   from `google.colab.files.download`, etc. Some outputs can be
+   hundreds of KB and balloon the diff.
+
+Before committing the notebook, clean both:
+
+```bash
+python -c "
+import json
+p = 'Listing_Parser_Fine_Tune_Unsloth.ipynb'
+nb = json.load(open(p))
+nb.get('metadata', {}).pop('widgets', None)
+for c in nb.get('cells', []):
+    c['outputs'] = []
+    c['execution_count'] = None
+json.dump(nb, open(p, 'w'), indent=1, ensure_ascii=False)
+"
+```
+
+If you find yourself running this more than once or twice, lift it
+into `scripts/clean_notebook.py` + wire a pre-commit hook.
 
 ## Known gotchas
 
@@ -199,3 +267,20 @@ lp-benchmark score \
   names, pluralised key variants). The scorer reports
   `schema_rate < 1.0` on gold-vs-gold when this happens — that's a
   signal to clean the labels, not a scorer bug.
+- Bedrock Converse rejects CMI-imported models with "This action
+  doesn't support the model that you provided" — use InvokeModel
+  instead. `BedrockFineTuneRunner` does this automatically via
+  `_USES_INVOKE_MODEL=True`, but if you're testing with raw `aws
+  bedrock-runtime` from the CLI, remember to use `invoke-model`, not
+  `converse`.
+- Bedrock CMI cold start is 60–120s on the first call after >5 min
+  idle. `bedrock_invoke.py` converts `ModelNotReadyException` to a
+  retryable throttle so the runner backs off instead of failing.
+- Bedrock CMI isn't available in `eu-west-2` (London) at time of
+  writing. `eu-central-1` (Frankfurt) is the nearest EU region with
+  CMI support; runner defaults to Frankfurt for `bedrock-ft`.
+- The Llama-3.1 chat template must be byte-identical between
+  training (Unsloth notebook) and serving (CMI InvokeModel). Cell
+  14 of the fine-tune notebook pins this against the canonical Meta
+  template; `bedrock_invoke._render_llama31_prompt` is the runtime
+  equivalent. If you change one, verify both.

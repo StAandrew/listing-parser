@@ -28,7 +28,7 @@ gives us:
 |---|---|---|
 | `base.py` | `Runner` Protocol + `RunnerResult` dataclass. Pure types. | No. |
 | `_output.py` | Fence stripping + parse-and-retry. Called by runner impls, not by the pipeline directly. | No. |
-| `bedrock.py` | `_BedrockRunnerBase` + `BedrockHaikuRunner` (teacher, Anthropic, caching on) + `BedrockLlamaRunner` (student base, Meta, caching off). Wraps `labelling/teacher.py`. | Yes: Bedrock Converse API. |
+| `bedrock.py` | `_BedrockRunnerBase` + three concrete runners: `BedrockHaikuRunner` (teacher, Converse + caching), `BedrockLlamaRunner` (student base, Converse no caching), `BedrockFineTuneRunner` (CMI import, InvokeModel). Dispatches on the `_USES_INVOKE_MODEL` class flag between `labelling/teacher.py` (Converse) and `labelling/bedrock_invoke.py` (InvokeModel). | Yes: Bedrock Converse + InvokeModel APIs. |
 | `pipeline.py` | Gold → predictions driver: gold loading, resume, concurrency, sidecar/log writers. | Yes: filesystem. |
 
 ## Hard rules
@@ -72,18 +72,42 @@ gives us:
 ### If the new runner is also Bedrock-backed
 
 Subclass `_BedrockRunnerBase` instead of re-implementing from
-scratch. Set four class-level defaults (`_DEFAULT_NAME`,
-`_DEFAULT_MODEL_ID`, `_DEFAULT_REGION`, `_DEFAULT_TEMPERATURE`,
-`_DEFAULT_USE_CACHE`) and that's it. See `BedrockHaikuRunner` and
-`BedrockLlamaRunner` for the pattern — neither has a custom
-`__init__` or `predict`.
+scratch. Set the class-level defaults:
 
-The `_DEFAULT_USE_CACHE` flag is load-bearing: Anthropic + Nova
-models accept `cachePoint` on the Converse system block, Meta's
-Llama integration returns ValidationException. Getting it wrong
-breaks *every* row of a run, so it's pinned with a unit test in
-`tests/test_runners.py` and a wire-level test in
-`tests/test_labelling.py` (`test_sync_converse_*`).
+- `_DEFAULT_NAME` — short slug used in report headers
+- `_DEFAULT_MODEL_ID` — set to `None` if caller must always provide
+  one (e.g. CMI ARNs are account-specific, so
+  `BedrockFineTuneRunner._DEFAULT_MODEL_ID = None` and its
+  constructor raises if one isn't passed)
+- `_DEFAULT_REGION` — where the model lives; note CMI isn't in
+  `eu-west-2` so Frankfurt is the default for `bedrock-ft`
+- `_DEFAULT_TEMPERATURE` — 0.0 for baselines (reproducibility),
+  0.2 for Haiku (matches labelling)
+- `_DEFAULT_USE_CACHE` — True for Anthropic Converse (cachePoint
+  supported), False for everything else
+- `_USES_INVOKE_MODEL` — False (default) for foundation models on
+  Converse; True for CMI imports which reject Converse and require
+  InvokeModel with a pre-rendered Llama prompt template
+
+See `BedrockHaikuRunner`, `BedrockLlamaRunner`, and
+`BedrockFineTuneRunner` for the pattern — none have a custom
+`predict()`, all the protocol dispatching lives in the base class.
+
+Both `_DEFAULT_USE_CACHE` and `_USES_INVOKE_MODEL` are load-bearing
+flags that break *every* row of a run if set wrong:
+
+- Using Converse against a CMI-imported model returns "This action
+  doesn't support the model that you provided" on every call.
+- Using InvokeModel against a foundation model sends a Llama-
+  flavoured prompt string to Anthropic, which either errors or
+  produces garbage.
+- Sending cachePoint to a Llama model returns ValidationException.
+
+These are pinned with wire-level tests in
+`tests/test_labelling.py` (`test_sync_converse_*` and
+`test_sync_invoke_*`) and default-regression tests in
+`tests/test_runners.py` (`test_bedrock_*_defaults_*` and
+`test_bedrock_haiku_and_llama_use_converse`).
 
 ## Resume semantics
 
@@ -112,3 +136,42 @@ Protocol and returns pre-seeded results. Test targets:
   rows still landing on disk.
 - `lp-benchmark run` CLI wiring — subparser registered, missing-gold
   returns rc=2.
+- Bedrock runner default regression tests, including the
+  `_USES_INVOKE_MODEL` dispatch flag — flipping it wrong breaks
+  every row of a run, so the tests guard both directions (Haiku/
+  Llama must NOT use InvokeModel, FineTune MUST use it).
+
+Protocol-shape tests live in `tests/test_labelling.py` because that's
+where the low-level Bedrock clients live:
+
+- `test_sync_converse_*` — Converse cachePoint toggle, system-block
+  shape.
+- `test_render_llama31_prompt_*` — byte-exact Llama chat template
+  rendering (must match Unsloth training template).
+- `test_sync_invoke_*` — InvokeModel payload/response shape and
+  `ModelNotReadyException`-as-retryable-throttle conversion.
+
+## Operational notes on CMI
+
+`BedrockFineTuneRunner` is the only CMI-served runner today.
+Specifics that apply to it but not the foundation-model runners:
+
+- **Cold start**: first InvokeModel call after >5 min idle takes
+  60–120s. Our `bedrock_invoke.call_imported` treats
+  `ModelNotReadyException` as a retryable throttle, so the
+  pipeline's existing backoff loop handles it — the user just sees
+  "row 0 took 90s" on the progress line. Don't try to "fix" this
+  by kicking the endpoint before scoring; Bedrock's pricing window
+  starts on the first real call and you'd be paying for warmup.
+- **Quota**: default on-demand quota is ~1 req/s. `--concurrency 2`
+  or higher triggers sustained throttling; stay at 1 unless you've
+  got a quota increase from AWS Service Quotas.
+- **Region**: CMI isn't available in `eu-west-2`. The runner
+  defaults to `eu-central-1` (Frankfurt); override via `--region`
+  if you've imported elsewhere.
+- **Economics**: CMI bills per 5-minute window of activity, $0.05718
+  per CMU per minute (us-east-1) or $0.07144 (eu-central-1), 2 CMUs
+  for Llama 3.1 8B. Scale-to-zero when idle + $3.90/month storage
+  per imported model. Roughly 5 hours/day of sustained invocation
+  is the break-even vs a SageMaker always-on endpoint; below that,
+  CMI is cheaper. See `README.md` §8 for the full breakdown.
